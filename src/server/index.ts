@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { openDb } from './db/index.js';
 import { readApiKeys, readUsageHistory } from './parsers/reader.js';
 import { summarizeKeyUsage } from './services/usage.js';
+import { startOfVietnamDayUtc, endOfVietnamDayUtc } from './utils/time.js';
 import { runWatcherOnce } from './services/watcher.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
@@ -25,8 +26,7 @@ const PolicyPatch = z.object({
 function ensurePolicies() {
   const keys = readApiKeys();
   const usage = readUsageHistory();
-  const firstUsage = usage.reduce<string | null>((min, r) => !min || r.timestamp < min ? r.timestamp : min, null);
-  const defaultStart = firstUsage ?? '1970-01-01T00:00:00.000Z';
+  const defaultStart = startOfVietnamDayUtc();
   const insert = db.prepare('INSERT OR IGNORE INTO key_policies (key_id, name, window_start) VALUES (?, ?, ?)');
   for (const key of keys) insert.run(key.id, key.name, defaultStart);
   return keys;
@@ -35,7 +35,8 @@ function ensurePolicies() {
 function usageResponse() {
   const keys = ensurePolicies();
   const usage = readUsageHistory();
-  const policies = db.prepare('SELECT key_id, name, window_start, window_end, token_limit, expires_at, action_on_limit FROM key_policies').all() as any[];
+  const policies = (db.prepare('SELECT key_id, name, window_start, window_end, token_limit, expires_at, action_on_limit FROM key_policies').all() as any[])
+    .map(p => ({ ...p, window_start: startOfVietnamDayUtc(), window_end: endOfVietnamDayUtc() }));
   return summarizeKeyUsage(keys, usage, policies);
 }
 
@@ -66,7 +67,7 @@ app.patch('/api/keys/:keyId/policy', async (req) => {
 
 app.post('/api/keys/:keyId/reset-window', async (req) => {
   const { keyId } = req.params as { keyId: string };
-  const windowStart = new Date().toISOString();
+  const windowStart = startOfVietnamDayUtc();
   db.prepare('UPDATE key_policies SET window_start = ?, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?').run(windowStart, keyId);
   db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'window.reset', windowStart);
   return usageResponse().find(x => x.keyId === keyId);

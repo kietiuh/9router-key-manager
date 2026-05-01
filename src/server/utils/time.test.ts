@@ -1,0 +1,13 @@
+import { describe, expect, it } from 'vitest';
+import { startOfVietnamDayUtc, endOfVietnamDayUtc, fromVietnamLocalInput, toVietnamLocalInput } from './time.js';
+
+describe('Vietnam UTC+7 day windows', () => {
+  it('starts at 00:00 VN stored as UTC', () => {
+    expect(startOfVietnamDayUtc(new Date('2026-05-01T15:00:00.000Z'))).toBe('2026-04-30T17:00:00.000Z');
+    expect(endOfVietnamDayUtc(new Date('2026-05-01T15:00:00.000Z'))).toBe('2026-05-01T17:00:00.000Z');
+  });
+  it('converts datetime-local VN to UTC and back', () => {
+    expect(fromVietnamLocalInput('2026-05-02T00:00')).toBe('2026-05-01T17:00:00.000Z');
+    expect(toVietnamLocalInput('2026-05-01T17:00:00.000Z')).toBe('2026-05-02T00:00');
+  });
+});
