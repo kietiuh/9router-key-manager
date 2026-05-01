@@ -1,0 +1,74 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.yarn/
+
+# Build outputs
+dist/
+build/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+
+# Databases / local state
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+data/
+state/
+.local-state/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Backups / dumps
+*.bak
+*.backup
+*.orig
+*.tmp
+*.dump
+*.tar
+*.tar.gz
+*.zip
+*.7z
+*.rar
+
+# 9router sensitive data - never commit
+.9router/
+**/.9router/**
+db.json
+usage.json
+request-details.json
+cloudflared.pid
+tunnel/state.json
+*.bak.*
+*.backup.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test scratch
+fixtures/private/
+tmp/
