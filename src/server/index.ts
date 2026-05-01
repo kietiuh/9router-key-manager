@@ -3,7 +3,7 @@ import cors from '@fastify/cors';
 import { z } from 'zod';
 import { openDb } from './db/index.js';
 import { readApiKeys, readUsageHistory } from './parsers/reader.js';
-import { summarizeKeyUsage, defaultWindowStart } from './services/usage.js';
+import { summarizeKeyUsage } from './services/usage.js';
 import { runWatcherOnce } from './services/watcher.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
@@ -24,9 +24,11 @@ const PolicyPatch = z.object({
 
 function ensurePolicies() {
   const keys = readApiKeys();
+  const usage = readUsageHistory();
+  const firstUsage = usage.reduce<string | null>((min, r) => !min || r.timestamp < min ? r.timestamp : min, null);
+  const defaultStart = firstUsage ?? '1970-01-01T00:00:00.000Z';
   const insert = db.prepare('INSERT OR IGNORE INTO key_policies (key_id, name, window_start) VALUES (?, ?, ?)');
-  const now = defaultWindowStart();
-  for (const key of keys) insert.run(key.id, key.name, now);
+  for (const key of keys) insert.run(key.id, key.name, defaultStart);
   return keys;
 }
 
