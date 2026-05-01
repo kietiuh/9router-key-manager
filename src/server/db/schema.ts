@@ -1,0 +1,27 @@
+import Database from 'better-sqlite3';
+
+export function migrate(db: Database.Database): void {
+  db.pragma('journal_mode = WAL');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS key_policies (
+      key_id TEXT PRIMARY KEY,
+      name TEXT,
+      window_start TEXT NOT NULL,
+      window_end TEXT,
+      token_limit INTEGER,
+      reset_policy TEXT NOT NULL DEFAULT 'manual',
+      expires_at TEXT,
+      action_on_limit TEXT NOT NULL DEFAULT 'alert',
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key_id TEXT,
+      action TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+}
