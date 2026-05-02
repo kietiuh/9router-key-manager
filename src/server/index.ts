@@ -33,6 +33,7 @@ const PolicyPatch = z.object({
   tokenLimit: z.number().int().positive().nullable().optional(), windowStart: z.string().optional(), windowEnd: z.string().nullable().optional(), expiresAt: z.string().nullable().optional(), resetPolicy: z.enum(['manual', 'daily', 'monthly', 'custom']).optional(), actionOnLimit: z.enum(['alert', 'disable', 'none']).optional(), notes: z.string().nullable().optional()
 });
 const LoginBody = z.object({ password: z.string() });
+const PublicKeyCheckBody = z.object({ key: z.string().min(8) });
 
 function isAuthed(req: any) { return req.unsignCookie(req.cookies?.admin_session ?? '').valid; }
 function requireAuth(req: any, reply: any, done: any) { if (isAuthed(req)) return done(); reply.code(401).send({ error: 'unauthorized' }); }
@@ -46,6 +47,17 @@ app.get('/api/health', async () => ({ ok: true, service: '9router-key-manager' }
 app.get('/api/auth/status', async (req) => ({ authenticated: isAuthed(req) }));
 app.post('/api/auth/login', async (req, reply) => { const body = LoginBody.parse(req.body); if (body.password !== adminPassword) return reply.code(401).send({ error: 'invalid password' }); reply.setCookie('admin_session', 'ok', { path: '/', signed: true, httpOnly: true, secure: true, sameSite: 'lax', maxAge: sessionMaxAge }); return { ok: true }; });
 app.post('/api/auth/logout', async (_req, reply) => { reply.clearCookie('admin_session', { path: '/' }); return { ok: true }; });
+
+app.post('/api/public/key-check', async (req, reply) => {
+  const body = PublicKeyCheckBody.parse(req.body);
+  const keys = ensurePolicies();
+  const match = keys.find(k => k.key === body.key.trim());
+  if (!match) return reply.code(404).send({ error: 'key not found' });
+  const usage = readUsageHistory();
+  const policy = resolvedPolicies().find(p => p.key_id === match.id);
+  const summary = summarizeKeyUsage([match], usage, policy ? [policy] : []).at(0);
+  return summary;
+});
 
 app.register(async protectedRoutes => {
   protectedRoutes.addHook('preHandler', requireAuth);
