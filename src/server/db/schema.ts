@@ -23,5 +23,12 @@ export function migrate(db: Database.Database): void {
       message TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS alert_state (
+      key_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (key_id, action, fingerprint)
+    );
   `);
 }

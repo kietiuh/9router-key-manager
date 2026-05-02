@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { readApiKeys, readUsageHistory } from '../parsers/reader.js';
 import { summarizeKeyUsage } from './usage.js';
-import { evaluateLimits, writeAudit } from './policies.js';
+import { evaluateLimits, shouldEmitAlert, writeAudit } from './policies.js';
 import { atomicDisableApiKey } from './atomic9router.js';
 
 export type WatcherOptions = { baseDir?: string; hardDisable?: boolean };
@@ -14,6 +14,7 @@ export function runWatcherOnce(db: Database.Database, options: WatcherOptions = 
   const events = evaluateLimits(summaries);
   const actions: any[] = [];
   for (const event of events) {
+    if (!shouldEmitAlert(db, event)) continue;
     writeAudit(db, event.keyId, event.action, event.message);
     if (event.action === 'disable' && options.hardDisable) {
       const result = atomicDisableApiKey(event.keyId, options.baseDir);
