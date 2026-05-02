@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { openDb } from './db/index.js';
 import fs from 'node:fs';
@@ -15,6 +18,12 @@ const port = Number(process.env.PORT ?? 3039);
 const app = Fastify({ logger: true });
 const db = openDb();
 await app.register(cors, { origin: true });
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const webRoot = process.env.WEB_ROOT ?? path.resolve(process.cwd(), 'dist/web');
+if (fs.existsSync(webRoot)) {
+  await app.register(fastifyStatic, { root: webRoot, prefix: '/', wildcard: false });
+}
 
 const PolicyPatch = z.object({
   tokenLimit: z.number().int().positive().nullable().optional(),
@@ -108,5 +117,12 @@ app.post('/api/keys/:keyId/reset-window', async (req) => {
 app.post('/api/watcher/run', async () => runWatcherOnce(db, { hardDisable: process.env.HARD_DISABLE === 'true' }));
 
 app.get('/api/audit', async () => db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT 200').all());
+
+if (fs.existsSync(webRoot)) {
+  app.setNotFoundHandler(async (req, reply) => {
+    if (req.raw.url?.startsWith('/api/')) return reply.code(404).send({ error: 'not found' });
+    return reply.sendFile('index.html');
+  });
+}
 
 await app.listen({ host, port });
