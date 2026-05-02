@@ -14,7 +14,9 @@
     "start": "tsx src/server/index.ts"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "latest",
+    "@fastify/formbody": "^8.0.2",
     "@fastify/static": "latest",
     "better-sqlite3": "latest",
     "dotenv": "^17.4.2",
