@@ -36,5 +36,21 @@ export function migrate(db: Database.Database): void {
       disabled_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       reason TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS image_usage_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      model TEXT NOT NULL,
+      size TEXT,
+      prompt_preview TEXT,
+      prompt_hash TEXT,
+      input_file TEXT,
+      output_file TEXT,
+      drive_path TEXT,
+      status TEXT NOT NULL,
+      error TEXT,
+      image_count INTEGER NOT NULL DEFAULT 1,
+      bytes INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 }

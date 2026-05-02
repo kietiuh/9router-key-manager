@@ -60,3 +60,30 @@ export type ConfigStatus = {
   timezone: string;
   errors: string[];
 };
+
+
+export type ImageUsageEvent = {
+  id: number;
+  kind: 'generation' | 'edit' | string;
+  model: string;
+  size?: string | null;
+  prompt_preview?: string | null;
+  prompt_hash?: string | null;
+  input_file?: string | null;
+  output_file?: string | null;
+  drive_path?: string | null;
+  status: 'success' | 'error' | string;
+  error?: string | null;
+  image_count: number;
+  bytes?: number | null;
+  created_at: string;
+};
+
+export type ImageUsageSummary = {
+  todayImages: number;
+  totalImages: number;
+  success: number;
+  errors: number;
+  bytes: number;
+  events: ImageUsageEvent[];
+};
