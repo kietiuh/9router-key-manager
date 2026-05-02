@@ -2,9 +2,11 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { z } from 'zod';
 import { openDb } from './db/index.js';
+import fs from 'node:fs';
 import { readApiKeys, readUsageHistory } from './parsers/reader.js';
+import { default9routerDir, dbJsonPath, usageJsonPath } from './parsers/paths.js';
 import { summarizeKeyUsage } from './services/usage.js';
-import { startOfVietnamDayUtc, endOfVietnamDayUtc } from './utils/time.js';
+import { startOfVietnamDayUtc, resolveWindow, VN_TZ_LABEL } from './utils/time.js';
 import { runWatcherOnce } from './services/watcher.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
@@ -25,22 +27,51 @@ const PolicyPatch = z.object({
 
 function ensurePolicies() {
   const keys = readApiKeys();
-  const usage = readUsageHistory();
   const defaultStart = startOfVietnamDayUtc();
-  const insert = db.prepare('INSERT OR IGNORE INTO key_policies (key_id, name, window_start) VALUES (?, ?, ?)');
-  for (const key of keys) insert.run(key.id, key.name, defaultStart);
+  const insert = db.prepare('INSERT OR IGNORE INTO key_policies (key_id, name, window_start, reset_policy) VALUES (?, ?, ?, ?)');
+  for (const key of keys) insert.run(key.id, key.name, defaultStart, 'daily');
   return keys;
 }
 
 function usageResponse() {
   const keys = ensurePolicies();
   const usage = readUsageHistory();
-  const policies = (db.prepare('SELECT key_id, name, window_start, window_end, token_limit, expires_at, action_on_limit FROM key_policies').all() as any[])
-    .map(p => ({ ...p, window_start: startOfVietnamDayUtc(), window_end: endOfVietnamDayUtc() }));
-  return summarizeKeyUsage(keys, usage, policies);
+  const policies = (db.prepare('SELECT key_id, name, window_start, window_end, reset_policy, token_limit, expires_at, action_on_limit FROM key_policies').all() as any[])
+    .map(p => {
+      const w = resolveWindow({ window_start: p.window_start, window_end: p.window_end, reset_policy: p.reset_policy });
+      return { ...p, window_start: w.windowStart, window_end: w.windowEnd, reset_policy: w.resetPolicy };
+    });
+  return summarizeKeyUsage(keys, usage, policies).sort((a, b) => {
+    const rank = { danger: 0, expired: 1, warning: 2, unlimited: 3, ok: 4, inactive: 5 } as const;
+    return rank[a.status] - rank[b.status] || (b.percentOfLimit ?? -1) - (a.percentOfLimit ?? -1);
+  });
+}
+
+function configStatus() {
+  const nineRouterDir = default9routerDir();
+  const dbPath = dbJsonPath(nineRouterDir);
+  const usagePath = usageJsonPath(nineRouterDir);
+  const errors: string[] = [];
+  const dbJsonExists = fs.existsSync(dbPath);
+  const usageJsonExists = fs.existsSync(usagePath);
+  if (!dbJsonExists) errors.push(`Missing 9router db.json at ${dbPath}`);
+  if (!usageJsonExists) errors.push(`Missing 9router usage.json at ${usagePath}`);
+  return {
+    ok: errors.length === 0,
+    nineRouterDir,
+    dbJsonPath: dbPath,
+    usageJsonPath: usagePath,
+    dbJsonExists,
+    usageJsonExists,
+    managerDbPath: process.env.KEY_MANAGER_DB ?? '~/.local/state/9router-key-manager/manager.sqlite',
+    hardDisable: process.env.HARD_DISABLE === 'true',
+    timezone: VN_TZ_LABEL,
+    errors
+  };
 }
 
 app.get('/api/health', async () => ({ ok: true, service: '9router-key-manager' }));
+app.get('/api/config/status', async () => configStatus());
 app.get('/api/keys/usage', async () => usageResponse());
 
 app.patch('/api/keys/:keyId/policy', async (req) => {

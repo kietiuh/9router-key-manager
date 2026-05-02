@@ -6,6 +6,7 @@ export type Policy = {
   name?: string | null;
   window_start: string;
   window_end?: string | null;
+  reset_policy?: 'manual' | 'daily' | 'monthly' | 'custom' | null;
   token_limit?: number | null;
   expires_at?: string | null;
   action_on_limit?: 'alert' | 'disable' | 'none' | null;
@@ -40,18 +41,35 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
       models.set(model, (models.get(model) ?? 0) + 1);
     }
     const limit = p?.token_limit ?? null;
+    const percent = limit ? total / limit * 100 : null;
+    const expired = !!p?.expires_at && p.expires_at <= nowIso;
+    const status = !key.isActive ? 'inactive'
+      : expired ? 'expired'
+      : percent != null && percent >= 100 ? 'danger'
+      : percent != null && percent >= 80 ? 'warning'
+      : !limit ? 'unlimited'
+      : 'ok';
+    const statusReason = !key.isActive ? 'Key is inactive'
+      : expired ? 'Key is expired'
+      : percent != null && percent >= 100 ? 'Token limit reached'
+      : percent != null && percent >= 80 ? 'Token usage above 80%'
+      : !limit ? 'No token limit configured'
+      : 'Healthy';
     return {
       keyId: key.id,
       name: p?.name ?? key.name,
       keyMasked: maskSecret(key.key),
       isActive: key.isActive,
+      status,
+      statusReason,
       windowStart,
       windowEnd,
+      resetPolicy: p?.reset_policy ?? 'manual',
       expiresAt: p?.expires_at ?? null,
       tokenLimit: limit,
       actionOnLimit: p?.action_on_limit ?? 'alert',
       req, prompt, completion, total, cost,
-      percentOfLimit: limit ? total / limit * 100 : null,
+      percentOfLimit: percent,
       firstUsageAt, lastUsageAt,
       models: Object.fromEntries([...models.entries()].sort((a,b)=>b[1]-a[1])),
     };

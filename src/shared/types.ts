@@ -22,13 +22,18 @@ export type UsageRecord = {
   };
 };
 
+export type KeyStatus = 'ok' | 'warning' | 'danger' | 'inactive' | 'expired' | 'unlimited';
+
 export type KeyUsageSummary = {
   keyId: string;
   name: string;
   keyMasked: string;
   isActive: boolean;
+  status: KeyStatus;
+  statusReason: string;
   windowStart: string;
   windowEnd?: string | null;
+  resetPolicy: 'manual' | 'daily' | 'monthly' | 'custom';
   expiresAt?: string | null;
   tokenLimit?: number | null;
   actionOnLimit: 'alert' | 'disable' | 'none';
@@ -41,4 +46,17 @@ export type KeyUsageSummary = {
   firstUsageAt?: string | null;
   lastUsageAt?: string | null;
   models: Record<string, number>;
+};
+
+export type ConfigStatus = {
+  ok: boolean;
+  nineRouterDir: string;
+  dbJsonPath: string;
+  usageJsonPath: string;
+  dbJsonExists: boolean;
+  usageJsonExists: boolean;
+  managerDbPath: string;
+  hardDisable: boolean;
+  timezone: string;
+  errors: string[];
 };
