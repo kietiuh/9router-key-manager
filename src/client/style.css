@@ -1,7 +1,7 @@
 :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif; background: #080d18; color: #e6edf7; }
 body { margin: 0; }
 main { padding: 24px; max-width: 1400px; margin: 0 auto; }
-header { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 20px; }
+header { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 20px; } .headActions { display:flex; gap:10px; align-items:center; } .headActions select { width:auto; min-width:76px; margin:0; }
 h1 { margin: 0; font-size: 30px; } h2, h3 { margin: 0 0 10px; } p { color: #9aa7bd; } code { color: #a9c4ff; }
 button { background: #356cff; color: white; border: 0; border-radius: 10px; padding: 10px 14px; cursor: pointer; } button:hover { filter: brightness(1.08); } button[type=button] { background: #28324a; }
 .cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 18px; }
@@ -28,6 +28,7 @@ input, select { width: 100%; box-sizing: border-box; margin-top: 4px; background
 .actions, .quick { display:flex; gap: 10px; margin: 12px 0 20px; flex-wrap:wrap; } .quick button { background:#123d2a; color:#55e39a; }
 .error { border: 1px solid #ef476f; color: #ff9aae; padding: 12px; border-radius: 12px; white-space: pre-wrap; background: #2a1018; }
 .audit { display: grid; gap: 8px; color: #bac6d8; }
+.login { min-height:100vh; display:grid; place-items:center; padding:20px; } .loginBox { width:min(420px, 100%); background:#121a2d; border:1px solid #26324b; border-radius:18px; padding:24px; box-shadow:0 20px 80px #0008; } .loginBox button { width:100%; margin-top:8px; } .loginErr { color:#ff7b91; margin:8px 0; }
 pre { overflow: auto; background: #0c1324; padding: 10px; border-radius: 10px; }
 @media (max-width: 1100px) { .cards { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 720px) { main { padding: 14px; } header { align-items: flex-start; flex-direction: column; } .cards { grid-template-columns: repeat(2, 1fr); } .issue { grid-template-columns: 1fr; } }
