@@ -6,8 +6,9 @@ h1 { margin: 0; font-size: 30px; } h2, h3 { margin: 0 0 10px; } p { color: #9aa7
 button { background: #356cff; color: white; border: 0; border-radius: 10px; padding: 10px 14px; cursor: pointer; } button:hover { filter: brightness(1.08); } button[type=button] { background: #28324a; }
 .cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 18px; }
 .card, .attention, .setup, .tableWrap { background: #121a2d; border: 1px solid #26324b; border-radius: 16px; padding: 16px; box-shadow: 0 10px 30px #0004; }
-.card span { color: #9aa7bd; display: block; } .card strong { font-size: 22px; }
+.card span { color: #9aa7bd; display: block; } .card strong { font-size: 22px; } .card.primary { border-color:#356cff; background:#142248; }
 .setup { border-color: #ef476f; margin-bottom: 16px; }
+.flow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px; background:#0c1324; border:1px solid #26324b; border-radius:14px; padding:12px 14px; color:#bac6d8; } .flow b { color:#e6edf7; } .flow span { background:#172238; border:1px solid #303d59; padding:6px 10px; border-radius:999px; }
 .attention { margin-bottom: 14px; display: grid; gap: 10px; }
 .issue { display: grid; grid-template-columns: 1fr 2fr auto; gap: 12px; align-items: center; text-align: left; background: #0c1324; border: 1px solid #303d59; }
 .issue span { color: #bac6d8; } .issue em { font-style: normal; color: #e6edf7; }
@@ -24,7 +25,7 @@ table { width: 100%; border-collapse: collapse; min-width: 980px; } th, td { pad
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 label { color: #9aa7bd; font-size: 12px; display:block; margin-bottom: 10px; } label b { color: #e6edf7; display:block; font-size: 15px; margin-top: 2px; }
 input, select { width: 100%; box-sizing: border-box; margin-top: 4px; background: #0c1324; color: #e6edf7; border: 1px solid #303d59; border-radius: 8px; padding: 9px; }
-.actions { display:flex; gap: 10px; margin: 12px 0 20px; }
+.actions, .quick { display:flex; gap: 10px; margin: 12px 0 20px; flex-wrap:wrap; } .quick button { background:#123d2a; color:#55e39a; }
 .error { border: 1px solid #ef476f; color: #ff9aae; padding: 12px; border-radius: 12px; white-space: pre-wrap; background: #2a1018; }
 .audit { display: grid; gap: 8px; color: #bac6d8; }
 pre { overflow: auto; background: #0c1324; padding: 10px; border-radius: 10px; }

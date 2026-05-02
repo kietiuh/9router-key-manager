@@ -25,4 +25,17 @@ describe('runWatcherOnce', () => {
     expect(after.apiKeys[0].isActive).toBe(false);
     expect(db.prepare('SELECT COUNT(*) as n FROM audit_log').get()).toMatchObject({ n: 1 });
   });
+
+  it('auto-enables daily quota lockouts when a new day window starts', () => {
+    const { dir, db } = fixture();
+    db.prepare('UPDATE key_policies SET reset_policy = ?, window_start = ? WHERE key_id = ?').run('daily', '2026-01-01T00:00:00.000Z', 'a');
+    db.prepare('INSERT INTO auto_disabled_keys (key_id, disabled_for_window_start, reason) VALUES (?, ?, ?)').run('a', '2026-01-01T00:00:00.000Z', 'quota');
+    const parsed = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
+    parsed.apiKeys[0].isActive = false;
+    fs.writeFileSync(path.join(dir, 'db.json'), JSON.stringify(parsed));
+    const out = runWatcherOnce(db, { baseDir: dir, hardDisable: true });
+    const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
+    expect(after.apiKeys[0].isActive).toBe(true);
+    expect(out.actions.some((a: any) => a.action === 'auto.enable')).toBe(true);
+  });
 });

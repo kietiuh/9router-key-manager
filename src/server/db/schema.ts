@@ -30,5 +30,11 @@ export function migrate(db: Database.Database): void {
       last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (key_id, action, fingerprint)
     );
+    CREATE TABLE IF NOT EXISTS auto_disabled_keys (
+      key_id TEXT PRIMARY KEY,
+      disabled_for_window_start TEXT NOT NULL,
+      disabled_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      reason TEXT NOT NULL
+    );
   `);
 }

@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { dbJsonPath } from '../parsers/paths.js';
 
-export type DisableResult = { changed: boolean; backupPath: string; dbPath: string };
+export type ToggleResult = { changed: boolean; backupPath: string; dbPath: string; isActive: boolean };
 
-export function atomicDisableApiKey(keyId: string, baseDir?: string, now = new Date()): DisableResult {
+function atomicToggleApiKey(keyId: string, isActive: boolean, baseDir?: string, now = new Date()): ToggleResult {
   const target = dbJsonPath(baseDir);
   const original = fs.readFileSync(target, 'utf8');
   const parsed = JSON.parse(original);
@@ -14,8 +14,8 @@ export function atomicDisableApiKey(keyId: string, baseDir?: string, now = new D
   const stamp = now.toISOString().replace(/[:.]/g, '-');
   const backupPath = `${target}.bak.${stamp}`;
   fs.copyFileSync(target, backupPath, fs.constants.COPYFILE_EXCL);
-  if (key.isActive === false) return { changed: false, backupPath, dbPath: target };
-  key.isActive = false;
+  if (key.isActive === isActive) return { changed: false, backupPath, dbPath: target, isActive };
+  key.isActive = isActive;
   key.updatedAt = now.toISOString();
   const next = JSON.stringify(parsed, null, 2) + '\n';
   JSON.parse(next);
@@ -23,5 +23,13 @@ export function atomicDisableApiKey(keyId: string, baseDir?: string, now = new D
   fs.writeFileSync(tmp, next, { mode: 0o600 });
   fs.renameSync(tmp, target);
   JSON.parse(fs.readFileSync(target, 'utf8'));
-  return { changed: true, backupPath, dbPath: target };
+  return { changed: true, backupPath, dbPath: target, isActive };
+}
+
+export function atomicDisableApiKey(keyId: string, baseDir?: string, now = new Date()): ToggleResult {
+  return atomicToggleApiKey(keyId, false, baseDir, now);
+}
+
+export function atomicEnableApiKey(keyId: string, baseDir?: string, now = new Date()): ToggleResult {
+  return atomicToggleApiKey(keyId, true, baseDir, now);
 }
