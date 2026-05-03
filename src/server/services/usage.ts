@@ -24,6 +24,7 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
     const windowStart = p?.window_start ?? '1970-01-01T00:00:00.000Z';
     const windowEnd = p?.window_end ?? null;
     const models = new Map<string, number>();
+    const modelUsage = new Map<string, { req: number; prompt: number; completion: number; lastUsageAt: string | null }>();
     let req = 0, prompt = 0, completion = 0, total = 0, cost = 0;
     let firstUsageAt: string | null = null, lastUsageAt: string | null = null;
     for (const r of usage) {
@@ -38,7 +39,13 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
       if (!firstUsageAt || r.timestamp < firstUsageAt) firstUsageAt = r.timestamp;
       if (!lastUsageAt || r.timestamp > lastUsageAt) lastUsageAt = r.timestamp;
       const model = r.model ?? '?';
-      models.set(model, (models.get(model) ?? 0) + 1);
+      const existing = modelUsage.get(model) ?? { req: 0, prompt: 0, completion: 0, lastUsageAt: null };
+      existing.req++;
+      existing.prompt += r.tokens?.prompt_tokens ?? 0;
+      existing.completion += r.tokens?.completion_tokens ?? 0;
+      if (!existing.lastUsageAt || r.timestamp > existing.lastUsageAt) existing.lastUsageAt = r.timestamp;
+      modelUsage.set(model, existing);
+      models.set(model, existing.req);
     }
     const limit = p?.token_limit ?? null;
     const percent = limit ? total / limit * 100 : null;
@@ -72,6 +79,7 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
       percentOfLimit: percent,
       firstUsageAt, lastUsageAt,
       models: Object.fromEntries([...models.entries()].sort((a,b)=>b[1]-a[1])),
+      modelUsage: [...modelUsage.entries()].map(([model, stats]) => ({ model, ...stats })).sort((a,b)=>b.req-a.req),
     };
   });
 }

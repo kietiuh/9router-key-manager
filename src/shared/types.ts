@@ -24,6 +24,14 @@ export type UsageRecord = {
 
 export type KeyStatus = 'ok' | 'warning' | 'danger' | 'inactive' | 'expired' | 'unlimited';
 
+export type ModelUsageSummary = {
+  model: string;
+  req: number;
+  prompt: number;
+  completion: number;
+  lastUsageAt?: string | null;
+};
+
 export type KeyUsageSummary = {
   keyId: string;
   name: string;
@@ -46,6 +54,7 @@ export type KeyUsageSummary = {
   firstUsageAt?: string | null;
   lastUsageAt?: string | null;
   models: Record<string, number>;
+  modelUsage: ModelUsageSummary[];
 };
 
 export type ConfigStatus = {
