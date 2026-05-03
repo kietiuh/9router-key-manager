@@ -52,7 +52,7 @@ function configStatus() { const nineRouterDir = default9routerDir(); const dbPat
 app.get('/api/health', async () => ({ ok: true, service: '9router-key-manager' }));
 app.get('/api/auth/status', async (req) => ({ authenticated: isAuthed(req) }));
 app.post('/api/auth/login', async (req, reply) => { const body = LoginBody.parse(req.body); if (body.password !== adminPassword) return reply.code(401).send({ error: 'invalid password' }); reply.setCookie('admin_session', 'ok', { path: '/', signed: true, httpOnly: true, secure: secureCookie, sameSite: 'lax', maxAge: sessionMaxAge }); return { ok: true }; });
-app.post('/api/auth/logout', async (_req, reply) => { reply.clearCookie('admin_session', { path: '/' }); return { ok: true }; });
+app.post('/api/auth/logout', async (_req, reply) => { reply.clearCookie('admin_session', { path: '/', secure: secureCookie, sameSite: 'lax' }); return reply.code(204).send(); });
 
 app.post('/api/public/key-check', async (req, reply) => {
   const body = PublicKeyCheckBody.parse(req.body);
