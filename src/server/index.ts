@@ -17,12 +17,15 @@ import { runWatcherOnce, startWatcher } from './services/watcher.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 3039);
-const adminPassword = process.env.ADMIN_PASSWORD ?? 'levuphong';
+const adminPassword = process.env.ADMIN_PASSWORD;
+if (!adminPassword) throw new Error('ADMIN_PASSWORD is required');
 const sessionSecret = process.env.SESSION_SECRET ?? crypto.createHash('sha256').update(`${adminPassword}:dev-secret`).digest('hex');
 const sessionMaxAge = Number(process.env.SESSION_MAX_AGE_SECONDS ?? 60 * 60 * 24 * 30);
+const secureCookie = process.env.COOKIE_SECURE === 'true' || (process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production');
+const allowedOrigins = new Set((process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',').map(o => o.trim()).filter(Boolean));
 const app = Fastify({ logger: true });
 const db = openDb();
-await app.register(cors, { origin: true });
+await app.register(cors, { origin: (origin, cb) => cb(null, !origin || allowedOrigins.has(origin)), credentials: true });
 await app.register(cookie, { secret: sessionSecret });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -48,7 +51,7 @@ function configStatus() { const nineRouterDir = default9routerDir(); const dbPat
 
 app.get('/api/health', async () => ({ ok: true, service: '9router-key-manager' }));
 app.get('/api/auth/status', async (req) => ({ authenticated: isAuthed(req) }));
-app.post('/api/auth/login', async (req, reply) => { const body = LoginBody.parse(req.body); if (body.password !== adminPassword) return reply.code(401).send({ error: 'invalid password' }); reply.setCookie('admin_session', 'ok', { path: '/', signed: true, httpOnly: true, secure: true, sameSite: 'lax', maxAge: sessionMaxAge }); return { ok: true }; });
+app.post('/api/auth/login', async (req, reply) => { const body = LoginBody.parse(req.body); if (body.password !== adminPassword) return reply.code(401).send({ error: 'invalid password' }); reply.setCookie('admin_session', 'ok', { path: '/', signed: true, httpOnly: true, secure: secureCookie, sameSite: 'lax', maxAge: sessionMaxAge }); return { ok: true }; });
 app.post('/api/auth/logout', async (_req, reply) => { reply.clearCookie('admin_session', { path: '/' }); return { ok: true }; });
 
 app.post('/api/public/key-check', async (req, reply) => {
@@ -69,7 +72,7 @@ app.register(async protectedRoutes => {
   protectedRoutes.get('/api/images/usage', async () => imageUsageSummary());
   protectedRoutes.post('/api/images/usage', async (req) => recordImageUsage(ImageUsageBody.parse(req.body)));
   protectedRoutes.patch('/api/keys/:keyId/policy', async (req) => { const { keyId } = req.params as { keyId: string }; ensurePolicies(); const body = PolicyPatch.parse(req.body); const current = db.prepare('SELECT * FROM key_policies WHERE key_id = ?').get(keyId) as any; if (!current) { const err = new Error('key policy not found') as Error & { statusCode?: number }; err.statusCode = 404; throw err; } db.prepare(`UPDATE key_policies SET token_limit = ?, window_start = ?, window_end = ?, expires_at = ?, reset_policy = ?, action_on_limit = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?`).run(body.tokenLimit === undefined ? current.token_limit : body.tokenLimit, body.windowStart ?? current.window_start, body.windowEnd === undefined ? current.window_end : body.windowEnd, body.expiresAt === undefined ? current.expires_at : body.expiresAt, body.resetPolicy ?? current.reset_policy, body.actionOnLimit ?? current.action_on_limit, body.notes === undefined ? current.notes : body.notes, keyId); db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'policy.update', JSON.stringify(body)); return usageResponse().find(x => x.keyId === keyId); });
-  protectedRoutes.post('/api/keys/:keyId/reset-window', async (req) => { const { keyId } = req.params as { keyId: string }; const windowStart = startOfVietnamDayUtc(); db.prepare('UPDATE key_policies SET window_start = ?, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?').run(windowStart, keyId); db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'window.reset', windowStart); return usageResponse().find(x => x.keyId === keyId); });
+  protectedRoutes.post('/api/keys/:keyId/reset-window', async (req, reply) => { const { keyId } = req.params as { keyId: string }; const current = db.prepare('SELECT reset_policy FROM key_policies WHERE key_id = ?').get(keyId) as any; if (!current) return reply.code(404).send({ error: 'key policy not found' }); if (current.reset_policy === 'daily' || current.reset_policy === 'monthly') return reply.code(409).send({ error: `reset-window is only available for manual/custom policies; ${current.reset_policy} windows reset automatically` }); const windowStart = new Date().toISOString(); db.prepare('UPDATE key_policies SET window_start = ?, window_end = NULL, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?').run(windowStart, keyId); db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'window.reset', windowStart); return usageResponse().find(x => x.keyId === keyId); });
   protectedRoutes.post('/api/watcher/run', async () => runWatcherOnce(db, { hardDisable: process.env.HARD_DISABLE === 'true' }));
   protectedRoutes.get('/api/audit', async () => db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT 200').all());
 });

@@ -44,9 +44,12 @@ Copy `.env.example` to `.env` if you need overrides.
 
 Important variables:
 
+- `ADMIN_PASSWORD`: required admin password; the server refuses to start without it.
 - `NINE_ROUTER_DIR`: path containing 9router `db.json` and `usage.json`; defaults to `~/.9router`.
 - `KEY_MANAGER_DB`: SQLite path for manager metadata; defaults to `~/.local/state/9router-key-manager/manager.sqlite`.
 - `HARD_DISABLE`: set to `true` only when you want quota breaches with action `disable` to modify 9router `db.json`.
+- `CORS_ORIGINS`: comma-separated allowed UI origins; defaults to local Vite origins.
+- `COOKIE_SECURE`: override secure-cookie behavior; defaults to secure in production only.
 
 ## Concepts
 
@@ -60,7 +63,7 @@ Each key has policy metadata in SQLite:
 - `expires_at`
 - `action_on_limit`: `alert`, `disable`, or `none`
 
-Current usage is computed by summing `usage.json.history` records matching that API key and inside the window. Resetting a key only updates `window_start` to now.
+Current usage is computed by summing `usage.json.history` records matching that API key and inside the window. Daily/monthly windows reset automatically on UTC+7 boundaries; manual reset only applies to `manual` and `custom` policies.
 
 ### Hard disable
 
