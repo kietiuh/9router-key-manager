@@ -12,6 +12,7 @@ export type Policy = {
   action_on_limit?: 'alert' | 'disable' | 'none' | null;
   usage_multiplier?: number | null;
   usage_multiplier_effective_at?: string | null;
+  usage_multiplier_events?: Array<{ multiplier: number; effective_at: string }> | null;
 };
 
 function dedupeSignature(r: UsageRecord): string {
@@ -30,6 +31,15 @@ function betterUsageRecord(a: UsageRecord, b: UsageRecord): UsageRecord {
   return (b.cost ?? Number.POSITIVE_INFINITY) < (a.cost ?? Number.POSITIVE_INFINITY) ? b : a;
 }
 
+function multiplierAt(timestamp: string, events: Array<{ multiplier: number; effective_at: string }>): number {
+  let factor = 1;
+  for (const event of events) {
+    if (event.effective_at <= timestamp) factor = Math.max(0, event.multiplier);
+    else break;
+  }
+  return factor;
+}
+
 function tokenTotal(r: UsageRecord): number {
   const t = r.tokens ?? {};
   return t.total_tokens ?? ((t.prompt_tokens ?? 0) + (t.completion_tokens ?? 0));
@@ -45,6 +55,7 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
     const modelUsage = new Map<string, { req: number; prompt: number; completion: number; lastUsageAt: string | null }>();
     const multiplier = Math.max(0, p?.usage_multiplier ?? 1);
     const multiplierEffectiveAt = p?.usage_multiplier_effective_at ?? null;
+    const multiplierEvents = (p?.usage_multiplier_events?.length ? p.usage_multiplier_events : (multiplierEffectiveAt ? [{ multiplier, effective_at: multiplierEffectiveAt }] : [])).filter(e => e.effective_at).sort((a, b) => a.effective_at.localeCompare(b.effective_at));
     const deduped = new Map<string, UsageRecord>();
     let duplicateRequests = 0, duplicateTokens = 0;
     for (const r of usage) {
@@ -64,7 +75,7 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
     let req = 0, prompt = 0, completion = 0, total = 0, actualPrompt = 0, actualCompletion = 0, actualTotal = 0, cost = 0;
     let firstUsageAt: string | null = null, lastUsageAt: string | null = null;
     for (const r of deduped.values()) {
-      const factor = multiplierEffectiveAt && r.timestamp >= multiplierEffectiveAt ? multiplier : 1;
+      const factor = multiplierAt(r.timestamp, multiplierEvents);
       const rawPrompt = r.tokens?.prompt_tokens ?? 0;
       const rawCompletion = r.tokens?.completion_tokens ?? 0;
       const rawTotal = tokenTotal(r);
