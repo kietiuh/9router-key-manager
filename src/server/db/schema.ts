@@ -18,6 +18,14 @@ export function migrate(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS usage_multiplier_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key_id TEXT NOT NULL,
+      multiplier REAL NOT NULL,
+      effective_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_multiplier_events_key_time ON usage_multiplier_events (key_id, effective_at);
     CREATE TABLE IF NOT EXISTS audit_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       key_id TEXT,

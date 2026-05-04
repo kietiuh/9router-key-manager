@@ -42,4 +42,21 @@ describe('summarizeKeyUsage', () => {
     expect(out.completion).toBe(50);
     expect(out.total).toBe(300);
   });
+
+  it('preserves historical multiplier segments after later multiplier changes', () => {
+    const rows = [
+      { apiKey: 'sk-aaaaaaaaaaaaaaaa', model: 'm1', timestamp: '2026-05-01T00:00:00.000Z', tokens: { prompt_tokens: 100, completion_tokens: 0 }, cost: 0.1 },
+      { apiKey: 'sk-aaaaaaaaaaaaaaaa', model: 'm1', timestamp: '2026-05-02T00:00:00.000Z', tokens: { prompt_tokens: 100, completion_tokens: 0 }, cost: 0.1 },
+      { apiKey: 'sk-aaaaaaaaaaaaaaaa', model: 'm1', timestamp: '2026-05-03T00:00:00.000Z', tokens: { prompt_tokens: 100, completion_tokens: 0 }, cost: 0.1 },
+      { apiKey: 'sk-aaaaaaaaaaaaaaaa', model: 'm1', timestamp: '2026-05-04T00:00:00.000Z', tokens: { prompt_tokens: 100, completion_tokens: 0 }, cost: 0.1 }
+    ];
+    const out = summarizeKeyUsage([keys[0]], rows, [{ key_id: 'a', window_start: '2026-05-01T00:00:00.000Z', usage_multiplier: 1, usage_multiplier_effective_at: '2026-05-04T00:00:00.000Z', usage_multiplier_events: [
+      { multiplier: 2, effective_at: '2026-05-02T00:00:00.000Z' },
+      { multiplier: 3, effective_at: '2026-05-03T00:00:00.000Z' },
+      { multiplier: 1, effective_at: '2026-05-04T00:00:00.000Z' }
+    ] }])[0];
+    expect(out.actualTotal).toBe(400);
+    expect(out.total).toBe(700);
+    expect(out.percentOfLimit).toBeNull();
+  });
 });
