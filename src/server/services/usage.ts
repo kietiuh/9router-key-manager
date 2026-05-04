@@ -10,7 +10,25 @@ export type Policy = {
   token_limit?: number | null;
   expires_at?: string | null;
   action_on_limit?: 'alert' | 'disable' | 'none' | null;
+  usage_multiplier?: number | null;
+  usage_multiplier_effective_at?: string | null;
 };
+
+function dedupeSignature(r: UsageRecord): string {
+  const t = r.tokens ?? {};
+  return [r.apiKey ?? '', (r as any).provider ?? '', (r as any).connectionId ?? '', r.timestamp, r.model ?? '', t.prompt_tokens ?? 0, t.completion_tokens ?? 0, t.total_tokens ?? ''].join('|');
+}
+
+function richness(r: UsageRecord): number {
+  const t = r.tokens ?? {};
+  return Number(t.cache_read_input_tokens != null) + Number(t.cache_creation_input_tokens != null) + Number(t.reasoning_tokens != null) + Number((r as any).endpoint != null);
+}
+
+function betterUsageRecord(a: UsageRecord, b: UsageRecord): UsageRecord {
+  const ar = richness(a), br = richness(b);
+  if (br !== ar) return br > ar ? b : a;
+  return (b.cost ?? Number.POSITIVE_INFINITY) < (a.cost ?? Number.POSITIVE_INFINITY) ? b : a;
+}
 
 function tokenTotal(r: UsageRecord): number {
   const t = r.tokens ?? {};
@@ -25,24 +43,47 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
     const windowEnd = p?.window_end ?? null;
     const models = new Map<string, number>();
     const modelUsage = new Map<string, { req: number; prompt: number; completion: number; lastUsageAt: string | null }>();
-    let req = 0, prompt = 0, completion = 0, total = 0, cost = 0;
-    let firstUsageAt: string | null = null, lastUsageAt: string | null = null;
+    const multiplier = Math.max(0, p?.usage_multiplier ?? 1);
+    const multiplierEffectiveAt = p?.usage_multiplier_effective_at ?? null;
+    const deduped = new Map<string, UsageRecord>();
+    let duplicateRequests = 0, duplicateTokens = 0;
     for (const r of usage) {
       if (r.apiKey !== key.key) continue;
       if (r.timestamp < windowStart) continue;
       if (windowEnd && r.timestamp >= windowEnd) continue;
+      const sig = dedupeSignature(r);
+      const existing = deduped.get(sig);
+      if (existing) {
+        duplicateRequests++;
+        duplicateTokens += tokenTotal(r);
+        deduped.set(sig, betterUsageRecord(existing, r));
+      } else {
+        deduped.set(sig, r);
+      }
+    }
+    let req = 0, prompt = 0, completion = 0, total = 0, actualPrompt = 0, actualCompletion = 0, actualTotal = 0, cost = 0;
+    let firstUsageAt: string | null = null, lastUsageAt: string | null = null;
+    for (const r of deduped.values()) {
+      const factor = multiplierEffectiveAt && r.timestamp >= multiplierEffectiveAt ? multiplier : 1;
+      const rawPrompt = r.tokens?.prompt_tokens ?? 0;
+      const rawCompletion = r.tokens?.completion_tokens ?? 0;
+      const rawTotal = tokenTotal(r);
+      const adjPrompt = Math.round(rawPrompt * factor);
+      const adjCompletion = Math.round(rawCompletion * factor);
+      const adjTotal = r.tokens?.total_tokens != null ? Math.round(rawTotal * factor) : adjPrompt + adjCompletion;
       req++;
-      prompt += r.tokens?.prompt_tokens ?? 0;
-      completion += r.tokens?.completion_tokens ?? 0;
-      total += tokenTotal(r);
-      cost += r.cost ?? 0;
+      actualPrompt += rawPrompt; actualCompletion += rawCompletion; actualTotal += rawTotal;
+      prompt += adjPrompt;
+      completion += adjCompletion;
+      total += adjTotal;
+      cost += (r.cost ?? 0) * factor;
       if (!firstUsageAt || r.timestamp < firstUsageAt) firstUsageAt = r.timestamp;
       if (!lastUsageAt || r.timestamp > lastUsageAt) lastUsageAt = r.timestamp;
       const model = r.model ?? '?';
       const existing = modelUsage.get(model) ?? { req: 0, prompt: 0, completion: 0, lastUsageAt: null };
       existing.req++;
-      existing.prompt += r.tokens?.prompt_tokens ?? 0;
-      existing.completion += r.tokens?.completion_tokens ?? 0;
+      existing.prompt += adjPrompt;
+      existing.completion += adjCompletion;
       if (!existing.lastUsageAt || r.timestamp > existing.lastUsageAt) existing.lastUsageAt = r.timestamp;
       modelUsage.set(model, existing);
       models.set(model, existing.req);
@@ -75,6 +116,10 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
       expiresAt: p?.expires_at ?? null,
       tokenLimit: limit,
       actionOnLimit: p?.action_on_limit ?? 'alert',
+      usageMultiplier: multiplier,
+      usageMultiplierEffectiveAt: multiplierEffectiveAt,
+      actualPrompt, actualCompletion, actualTotal,
+      dedupedRequests: req, duplicateRequests, duplicateTokens,
       req, prompt, completion, total, cost,
       percentOfLimit: percent,
       firstUsageAt, lastUsageAt,

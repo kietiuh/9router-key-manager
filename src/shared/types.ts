@@ -45,6 +45,14 @@ export type KeyUsageSummary = {
   expiresAt?: string | null;
   tokenLimit?: number | null;
   actionOnLimit: 'alert' | 'disable' | 'none';
+  usageMultiplier: number;
+  usageMultiplierEffectiveAt?: string | null;
+  actualPrompt: number;
+  actualCompletion: number;
+  actualTotal: number;
+  dedupedRequests: number;
+  duplicateRequests: number;
+  duplicateTokens: number;
   req: number;
   prompt: number;
   completion: number;
