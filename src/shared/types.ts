@@ -104,3 +104,18 @@ export type ImageUsageSummary = {
   bytes: number;
   events: ImageUsageEvent[];
 };
+
+export type ModelRewriteRule = {
+  id: number;
+  enabled: boolean;
+  fromModel: string;
+  toModel: string;
+  note?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type ModelRewriteConfig = {
+  enabled: boolean;
+  rules: ModelRewriteRule[];
+};
