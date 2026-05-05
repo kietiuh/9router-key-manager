@@ -33,4 +33,13 @@ describe('applyModelRewrite', () => {
     expect(res.rewritten).toBe(false);
     expect(res.body).toBe(raw);
   });
+
+  it('passes through non-json content and non-string model payloads', () => {
+    const raw = Buffer.from('{"model":"v1/cx/gpt-5.5"}');
+    expect(applyModelRewrite(raw, 'text/plain', cfg).body).toBe(raw);
+    const numeric = Buffer.from('{"model":123}');
+    const res = applyModelRewrite(numeric, 'application/json', cfg);
+    expect(res.rewritten).toBe(false);
+    expect(res.body).toBe(numeric);
+  });
 });

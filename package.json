@@ -9,6 +9,7 @@
     "dev:web": "vite --host 0.0.0.0",
     "build": "vite build",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
     "format": "prettier --write .",
     "start": "tsx src/server/index.ts"
@@ -29,6 +30,7 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
+    "@vitest/coverage-v8": "^4.1.5",
     "eslint": "latest",
     "npm-run-all": "latest",
     "prettier": "latest",

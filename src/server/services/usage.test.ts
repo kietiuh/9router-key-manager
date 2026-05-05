@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { summarizeKeyUsage } from './usage.js';
+import { defaultWindowStart, summarizeKeyUsage } from './usage.js';
 
 const keys = [
   { id: 'a', name: 'Key A', key: 'sk-aaaaaaaaaaaaaaaa', isActive: true },
@@ -58,5 +58,27 @@ describe('summarizeKeyUsage', () => {
     expect(out.actualTotal).toBe(400);
     expect(out.total).toBe(700);
     expect(out.percentOfLimit).toBeNull();
+  });
+
+  it('excludes records at window_end and includes records at window_start', () => {
+    const rows = [
+      { apiKey: 'sk-aaaaaaaaaaaaaaaa', model: 'm', timestamp: '2026-05-01T00:00:00.000Z', tokens: { total_tokens: 10 } },
+      { apiKey: 'sk-aaaaaaaaaaaaaaaa', model: 'm', timestamp: '2026-05-02T00:00:00.000Z', tokens: { total_tokens: 90 } }
+    ];
+    const out = summarizeKeyUsage([keys[0]], rows, [{ key_id: 'a', window_start: '2026-05-01T00:00:00.000Z', window_end: '2026-05-02T00:00:00.000Z' }])[0];
+    expect(out.total).toBe(10);
+  });
+
+  it('pins exact status thresholds and inactive precedence', () => {
+    const warning = summarizeKeyUsage([keys[0]], [{ apiKey: keys[0].key, timestamp: '2026-05-01T00:00:00.000Z', tokens: { total_tokens: 80 } }], [{ key_id: 'a', window_start: '2026-05-01T00:00:00.000Z', token_limit: 100 }])[0];
+    expect(warning.status).toBe('warning');
+    const danger = summarizeKeyUsage([keys[0]], [{ apiKey: keys[0].key, timestamp: '2026-05-01T00:00:00.000Z', tokens: { total_tokens: 100 } }], [{ key_id: 'a', window_start: '2026-05-01T00:00:00.000Z', token_limit: 100 }])[0];
+    expect(danger.status).toBe('danger');
+    const inactive = summarizeKeyUsage([{ ...keys[0], isActive: false }], [{ apiKey: keys[0].key, timestamp: '2026-05-01T00:00:00.000Z', tokens: { total_tokens: 100 } }], [{ key_id: 'a', window_start: '2026-05-01T00:00:00.000Z', token_limit: 100, expires_at: '2026-01-01T00:00:00.000Z' }], '2026-05-01T00:00:00.000Z')[0];
+    expect(inactive.status).toBe('inactive');
+  });
+
+  it('returns the provided default window start', () => {
+    expect(defaultWindowStart('2026-05-05T00:00:00.000Z')).toBe('2026-05-05T00:00:00.000Z');
   });
 });

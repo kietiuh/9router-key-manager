@@ -28,4 +28,14 @@ describe('evaluateLimits', () => {
     expect(shouldEmitAlert(db, event)).toBe(true);
     expect(shouldEmitAlert(db, event)).toBe(false);
   });
+
+  it('does not emit when action is none or quota is below limit', () => {
+    expect(evaluateLimits([summary({ total: 120, actionOnLimit: 'none', expiresAt: '2026-01-01T00:00:00.000Z' })], '2026-01-02T00:00:00.000Z')).toEqual([]);
+    expect(evaluateLimits([summary({ total: 99 })], '2026-01-02T00:00:00.000Z')).toEqual([]);
+  });
+
+  it('maps disable policy to disable events', () => {
+    const events = evaluateLimits([summary({ total: 120, actionOnLimit: 'disable' })], '2026-01-02T00:00:00.000Z');
+    expect(events).toMatchObject([{ action: 'disable', fingerprint: 'quota:2026-01-01T00:00:00.000Z:100' }]);
+  });
 });

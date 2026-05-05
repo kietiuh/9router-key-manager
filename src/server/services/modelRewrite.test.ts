@@ -38,4 +38,13 @@ describe('model rewrite config', () => {
     expect(cfg.rules[0].toModel).toBe('B');
     expect(cfg.rules[0].note).toBe('x');
   });
+
+  it('replaces all saved rules and keeps exact string matching', () => {
+    const db = memDb();
+    saveModelRewriteConfig(db, { enabled: true, rules: [{ fromModel: 'A', toModel: 'B' }] });
+    const cfg = saveModelRewriteConfig(db, { enabled: true, rules: [{ fromModel: 'a', toModel: 'c' }] });
+    expect(cfg.rules.map(r => r.fromModel)).toEqual(['a']);
+    expect(rewriteModel('A', cfg).rewritten).toBe(false);
+    expect(rewriteModel('a', cfg)).toMatchObject({ model: 'c', rewritten: true });
+  });
 });
