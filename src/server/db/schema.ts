@@ -62,6 +62,21 @@ export function migrate(db: Database.Database): void {
       bytes INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS model_rewrite_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      from_model TEXT NOT NULL,
+      to_model TEXT NOT NULL,
+      note TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_model_rewrite_rules_from ON model_rewrite_rules (from_model);
   `);
   const cols = db.prepare("PRAGMA table_info(key_policies)").all() as Array<{ name: string }>;
   const names = new Set(cols.map(c => c.name));
