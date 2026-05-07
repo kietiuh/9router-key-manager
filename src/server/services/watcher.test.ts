@@ -38,4 +38,18 @@ describe('runWatcherOnce', () => {
     expect(after.apiKeys[0].isActive).toBe(true);
     expect(out.actions.some((a: any) => a.action === 'auto.enable')).toBe(true);
   });
+
+  it('hard-disables based on historical multiplied billable total, not raw actual tokens', () => {
+    const { dir, db } = fixture();
+    fs.writeFileSync(path.join(dir, 'usage.json'), JSON.stringify({ history: [{ apiKey: 'sk-a', model: 'm', timestamp: '2026-01-02T00:00:00.000Z', tokens: { total_tokens: 60 } }] }, null, 2));
+    db.prepare('UPDATE key_policies SET token_limit = ?, usage_multiplier = ?, usage_multiplier_effective_at = ? WHERE key_id = ?').run(100, 1, '2026-01-02T01:00:00.000Z', 'a');
+    db.prepare('INSERT INTO usage_multiplier_events (key_id, multiplier, effective_at) VALUES (?, ?, ?)').run('a', 2, '2026-01-01T00:00:00.000Z');
+    db.prepare('INSERT INTO usage_multiplier_events (key_id, multiplier, effective_at) VALUES (?, ?, ?)').run('a', 1, '2026-01-02T01:00:00.000Z');
+    const out = runWatcherOnce(db, { baseDir: dir, hardDisable: true });
+    expect(out.summaries[0].actualTotal).toBe(60);
+    expect(out.summaries[0].total).toBe(120);
+    expect(out.events).toHaveLength(1);
+    const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
+    expect(after.apiKeys[0].isActive).toBe(false);
+  });
 });

@@ -31,6 +31,7 @@ function betterUsageRecord(a: UsageRecord, b: UsageRecord): UsageRecord {
   return (b.cost ?? Number.POSITIVE_INFINITY) < (a.cost ?? Number.POSITIVE_INFINITY) ? b : a;
 }
 
+
 function multiplierAt(timestamp: string, events: Array<{ multiplier: number; effective_at: string }>): number {
   let factor = 1;
   for (const event of events) {

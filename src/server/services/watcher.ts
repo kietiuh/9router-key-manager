@@ -8,9 +8,16 @@ import { resolveWindow } from '../utils/time.js';
 export type WatcherOptions = { baseDir?: string; hardDisable?: boolean };
 
 function resolvedPolicies(db: Database.Database) {
+  const events = db.prepare('SELECT key_id, multiplier, effective_at FROM usage_multiplier_events ORDER BY effective_at ASC, id ASC').all() as Array<{ key_id: string; multiplier: number; effective_at: string }>;
+  const byKey = new Map<string, Array<{ multiplier: number; effective_at: string }>>();
+  for (const e of events) {
+    const arr = byKey.get(e.key_id) ?? [];
+    arr.push({ multiplier: Number(e.multiplier), effective_at: e.effective_at });
+    byKey.set(e.key_id, arr);
+  }
   return (db.prepare('SELECT * FROM key_policies').all() as any[]).map(p => {
     const w = resolveWindow({ window_start: p.window_start, window_end: p.window_end, reset_policy: p.reset_policy });
-    return { ...p, window_start: w.windowStart, window_end: w.windowEnd, reset_policy: w.resetPolicy };
+    return { ...p, window_start: w.windowStart, window_end: w.windowEnd, reset_policy: w.resetPolicy, usage_multiplier_events: byKey.get(p.key_id) ?? [] };
   });
 }
 
