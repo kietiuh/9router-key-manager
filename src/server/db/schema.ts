@@ -46,6 +46,26 @@ export function migrate(db: Database.Database): void {
       disabled_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       reason TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS usage_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      signature TEXT NOT NULL UNIQUE,
+      api_key TEXT,
+      model TEXT,
+      provider TEXT,
+      connection_id TEXT,
+      timestamp TEXT NOT NULL,
+      cost REAL,
+      prompt_tokens INTEGER,
+      completion_tokens INTEGER,
+      total_tokens INTEGER,
+      cache_read_input_tokens INTEGER,
+      cache_creation_input_tokens INTEGER,
+      reasoning_tokens INTEGER,
+      raw_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_events_key_time ON usage_events (api_key, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_usage_events_time ON usage_events (timestamp);
     CREATE TABLE IF NOT EXISTS image_usage_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       kind TEXT NOT NULL,

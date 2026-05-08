@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { readApiKeys, readUsageHistory } from '../parsers/reader.js';
 import { summarizeKeyUsage } from './usage.js';
+import { ingestUsageHistory, readStoredUsage } from './usageStore.js';
 import { evaluateLimits, shouldEmitAlert, writeAudit } from './policies.js';
 import { atomicDisableApiKey, atomicEnableApiKey } from './atomic9router.js';
 import { resolveWindow } from '../utils/time.js';
@@ -45,7 +46,8 @@ function restoreNewDailyWindows(db: Database.Database, keys: ReturnType<typeof r
 
 export function runWatcherOnce(db: Database.Database, options: WatcherOptions = {}) {
   const keys = readApiKeys(options.baseDir);
-  const usage = readUsageHistory(options.baseDir);
+  ingestUsageHistory(db, readUsageHistory(options.baseDir));
+  const usage = readStoredUsage(db);
   const policies = resolvedPolicies(db);
   const restored = restoreNewDailyWindows(db, keys, policies, options);
   const keysAfterRestore = restored.length ? readApiKeys(options.baseDir) : keys;
