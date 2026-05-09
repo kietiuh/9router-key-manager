@@ -45,7 +45,9 @@ const PolicyPatch = z.object({
 const LoginBody = z.object({ password: z.string() });
 const PublicKeyCheckBody = z.object({ key: z.string().min(8) });
 const ImageUsageBody = z.object({ kind: z.string(), model: z.string(), size: z.string().optional(), promptPreview: z.string().optional(), promptHash: z.string().optional(), inputFile: z.string().optional(), outputFile: z.string().optional(), drivePath: z.string().optional(), status: z.string(), error: z.string().optional(), imageCount: z.number().int().positive().optional(), bytes: z.number().int().nonnegative().optional() });
-const ModelRewriteConfigBody = z.object({ enabled: z.boolean(), rules: z.array(z.object({ id: z.number().int().positive().optional(), enabled: z.boolean().optional(), fromModel: z.string(), toModel: z.string(), note: z.string().nullable().optional() })) });
+const ModelRewriteRuleBody = z.object({ id: z.number().int().positive().optional(), groupId: z.number().int().positive().nullable().optional(), enabled: z.boolean().optional(), fromModel: z.string(), toModel: z.string(), note: z.string().nullable().optional() });
+const ModelRewriteGroupBody = z.object({ id: z.number().int().positive().optional(), name: z.string().optional(), enabled: z.boolean().optional(), rules: z.array(ModelRewriteRuleBody).optional() });
+const ModelRewriteConfigBody = z.object({ enabled: z.boolean(), groups: z.array(ModelRewriteGroupBody).optional(), rules: z.array(ModelRewriteRuleBody).optional() });
 
 function isAuthed(req: any) { return req.unsignCookie(req.cookies?.admin_session ?? '').valid; }
 async function requireAuth(req: any, reply: any) { if (!isAuthed(req)) return reply.code(401).send({ error: 'unauthorized' }); }

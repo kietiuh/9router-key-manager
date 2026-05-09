@@ -87,12 +87,22 @@ export function migrate(db: Database.Database): void {
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS model_rewrite_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS model_rewrite_rules (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id INTEGER,
       enabled INTEGER NOT NULL DEFAULT 1,
       from_model TEXT NOT NULL,
       to_model TEXT NOT NULL,
       note TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -102,5 +112,18 @@ export function migrate(db: Database.Database): void {
   const names = new Set(cols.map(c => c.name));
   if (!names.has('usage_multiplier')) db.exec('ALTER TABLE key_policies ADD COLUMN usage_multiplier REAL NOT NULL DEFAULT 1.0');
   if (!names.has('usage_multiplier_effective_at')) db.exec('ALTER TABLE key_policies ADD COLUMN usage_multiplier_effective_at TEXT');
+  const rewriteCols = db.prepare("PRAGMA table_info(model_rewrite_rules)").all() as Array<{ name: string }>;
+  const rewriteNames = new Set(rewriteCols.map(c => c.name));
+  if (!rewriteNames.has('group_id')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN group_id INTEGER');
+  if (!rewriteNames.has('sort_order')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0');
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_model_rewrite_groups_order ON model_rewrite_groups (sort_order, id);
+    CREATE INDEX IF NOT EXISTS idx_model_rewrite_rules_group_order ON model_rewrite_rules (group_id, sort_order, id);
+  `);
+  const orphanRules = db.prepare('SELECT COUNT(*) count FROM model_rewrite_rules WHERE group_id IS NULL').get() as { count: number };
+  if (Number(orphanRules.count) > 0) {
+    db.prepare('INSERT INTO model_rewrite_groups (name, enabled, sort_order) SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM model_rewrite_groups WHERE name = ?)').run('Default', 1, 0, 'Default');
+    const defaultGroup = db.prepare('SELECT id FROM model_rewrite_groups WHERE name = ? ORDER BY id ASC LIMIT 1').get('Default') as { id: number };
+    db.prepare('UPDATE model_rewrite_rules SET group_id = ?, sort_order = id WHERE group_id IS NULL').run(defaultGroup.id);
+  }
 }
-

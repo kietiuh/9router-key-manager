@@ -7,19 +7,38 @@ import { KeyDrawer } from './KeyDrawer';
 
 type Audit = { id: number; key_id?: string; action: string; message: string; created_at: string };
 
-type RewriteDraftRule = { id?: number; enabled: boolean; fromModel: string; toModel: string; note?: string | null };
+type RewriteDraftRule = { id?: number; groupId?: number | null; enabled: boolean; fromModel: string; toModel: string; note?: string | null };
+type RewriteDraftGroup = { id?: number; name: string; enabled: boolean; rules: RewriteDraftRule[] };
 
-function ModelRewritePanel({ config, onSave, saving }: { config: ModelRewriteConfig | null; onSave: (cfg: { enabled: boolean; rules: RewriteDraftRule[] }) => Promise<void>; saving: boolean }) {
+function draftGroups(config: ModelRewriteConfig | null): RewriteDraftGroup[] {
+  if (config?.groups?.length) return config.groups.map(g => ({ id: g.id, name: g.name, enabled: g.enabled, rules: g.rules.map(r => ({ id: r.id, groupId: r.groupId, enabled: r.enabled, fromModel: r.fromModel, toModel: r.toModel, note: r.note })) }));
+  if (config?.rules?.length) return [{ name: 'Default', enabled: true, rules: config.rules.map(r => ({ id: r.id, groupId: r.groupId, enabled: r.enabled, fromModel: r.fromModel, toModel: r.toModel, note: r.note })) }];
+  return [];
+}
+
+function ModelRewritePanel({ config, onSave, saving }: { config: ModelRewriteConfig | null; onSave: (cfg: { enabled: boolean; groups: RewriteDraftGroup[] }) => Promise<void>; saving: boolean }) {
   const [enabled, setEnabled] = useState(false);
-  const [rules, setRules] = useState<RewriteDraftRule[]>([]);
+  const [groups, setGroups] = useState<RewriteDraftGroup[]>([]);
   const [dirty, setDirty] = useState(false);
-  useEffect(() => { if (dirty) return; setEnabled(Boolean(config?.enabled)); setRules(config?.rules?.map(r => ({ id: r.id, enabled: r.enabled, fromModel: r.fromModel, toModel: r.toModel, note: r.note })) ?? []); }, [config, dirty]);
+  useEffect(() => { if (dirty) return; setEnabled(Boolean(config?.enabled)); setGroups(draftGroups(config)); }, [config, dirty]);
   const markEnabled = (v: boolean) => { setDirty(true); setEnabled(v); };
-  const addRule = () => { setDirty(true); setRules([...rules, { enabled: true, fromModel: '', toModel: '', note: '' }]); };
-  const patchRule = (idx: number, patch: Partial<RewriteDraftRule>) => { setDirty(true); setRules(rules.map((r, i) => i === idx ? { ...r, ...patch } : r)); };
-  const removeRule = (idx: number) => { setDirty(true); setRules(rules.filter((_, i) => i !== idx)); };
-  const save = async () => { await onSave({ enabled, rules }); setDirty(false); };
-  return <section className="attention"><h2>Cấu hình nâng cao — Model rewrite</h2><p>Soft OFF: tắt global là proxy không rewrite model. Khi bật, chỉ model khớp rule mới đổi A → B; model không khớp forward nguyên body. Draft đang chỉnh sẽ không bị auto-refresh ghi đè.</p><label><input type="checkbox" checked={enabled} onChange={e => markEnabled(e.target.checked)} /> Enable model rewrite</label><div className="rewriteList">{rules.map((r, i) => <div className="rewriteRule" key={i}><label><input type="checkbox" checked={r.enabled} onChange={e => patchRule(i, { enabled: e.target.checked })} /> Rule enabled</label><label>From model<input value={r.fromModel} onChange={e => patchRule(i, { fromModel: e.target.value })} placeholder="v1/cx/gpt-5.5" /></label><label>To model<input value={r.toModel} onChange={e => patchRule(i, { toModel: e.target.value })} placeholder="cx/gpt-5.5" /></label><label>Note<input value={r.note ?? ''} onChange={e => patchRule(i, { note: e.target.value })} placeholder="optional" /></label><button type="button" onClick={() => removeRule(i)}>Remove</button></div>)}</div><div className="actions"><button type="button" onClick={addRule}>Add rule</button><button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save rewrite config'}{dirty ? ' *' : ''}</button></div></section>;
+  const addGroup = () => { setDirty(true); setGroups([...groups, { name: `Group ${groups.length + 1}`, enabled: true, rules: [] }]); };
+  const patchGroup = (idx: number, patch: Partial<RewriteDraftGroup>) => { setDirty(true); setGroups(groups.map((g, i) => i === idx ? { ...g, ...patch } : g)); };
+  const removeGroup = (idx: number) => { setDirty(true); setGroups(groups.filter((_, i) => i !== idx)); };
+  const addRule = (groupIdx: number) => {
+    setDirty(true);
+    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: [...g.rules, { enabled: true, fromModel: '', toModel: '', note: '' }] } : g));
+  };
+  const patchRule = (groupIdx: number, ruleIdx: number, patch: Partial<RewriteDraftRule>) => {
+    setDirty(true);
+    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => j === ruleIdx ? { ...r, ...patch } : r) } : g));
+  };
+  const removeRule = (groupIdx: number, ruleIdx: number) => {
+    setDirty(true);
+    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.filter((_, j) => j !== ruleIdx) } : g));
+  };
+  const save = async () => { await onSave({ enabled, groups }); setDirty(false); };
+  return <section className="attention"><h2>Cấu hình nâng cao — Model rewrite</h2><p>Soft OFF: tắt global là proxy không rewrite model. Khi bật, hệ thống duyệt group theo thứ tự, bỏ qua group/rule đang tắt, rule khớp đầu tiên sẽ đổi A → B.</p><label><input type="checkbox" checked={enabled} onChange={e => markEnabled(e.target.checked)} /> Enable model rewrite</label><div className="rewriteList">{groups.map((g, groupIdx) => <div className="rewriteGroup" key={groupIdx}><div className="rewriteGroupHead"><label><input type="checkbox" checked={g.enabled} onChange={e => patchGroup(groupIdx, { enabled: e.target.checked })} /> Group enabled</label><label>Group name<input value={g.name} onChange={e => patchGroup(groupIdx, { name: e.target.value })} placeholder="Group A" /></label><button type="button" onClick={() => removeGroup(groupIdx)}>Remove group</button></div><div className="rewriteRules">{g.rules.map((r, ruleIdx) => <div className="rewriteRule" key={ruleIdx}><label><input type="checkbox" checked={r.enabled} onChange={e => patchRule(groupIdx, ruleIdx, { enabled: e.target.checked })} /> Rule enabled</label><label>From model<input value={r.fromModel} onChange={e => patchRule(groupIdx, ruleIdx, { fromModel: e.target.value })} placeholder="v1/cx/gpt-5.5" /></label><label>To model<input value={r.toModel} onChange={e => patchRule(groupIdx, ruleIdx, { toModel: e.target.value })} placeholder="cx/gpt-5.5" /></label><label>Note<input value={r.note ?? ''} onChange={e => patchRule(groupIdx, ruleIdx, { note: e.target.value })} placeholder="optional" /></label><button type="button" onClick={() => removeRule(groupIdx, ruleIdx)}>Remove</button></div>)}</div><button type="button" onClick={() => addRule(groupIdx)}>Add rule</button></div>)}</div><div className="actions"><button type="button" onClick={addGroup}>Add group</button><button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save rewrite config'}{dirty ? ' *' : ''}</button></div></section>;
 }
 
 function attention(k: KeyUsageSummary) {
@@ -72,7 +91,7 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
     await refresh();
   }
 
-  async function saveRewriteConfig(cfg: { enabled: boolean; rules: RewriteDraftRule[] }) {
+  async function saveRewriteConfig(cfg: { enabled: boolean; groups: RewriteDraftGroup[] }) {
     setSaving('model-rewrite');
     try {
       const next = await api<ModelRewriteConfig>('/api/model-rewrite/config', { method: 'PUT', body: JSON.stringify(cfg) });

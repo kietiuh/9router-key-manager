@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyModelRewrite } from './modelRewriteProxy.js';
 
-const cfg = { enabled: true, rules: [{ id: 1, enabled: true, fromModel: 'v1/cx/gpt-5.5', toModel: 'cx/gpt-5.5' }] };
+const cfg = { enabled: true, groups: [{ id: 1, name: 'Main', enabled: true, rules: [{ id: 1, groupId: 1, enabled: true, fromModel: 'v1/cx/gpt-5.5', toModel: 'cx/gpt-5.5' }] }] };
 
 describe('applyModelRewrite', () => {
   it('passes through when globally disabled', () => {
@@ -25,6 +25,13 @@ describe('applyModelRewrite', () => {
     expect(res.fromModel).toBe('v1/cx/gpt-5.5');
     expect(res.toModel).toBe('cx/gpt-5.5');
     expect(JSON.parse(res.body.toString('utf8')).model).toBe('cx/gpt-5.5');
+  });
+
+  it('passes through rules inside disabled groups', () => {
+    const raw = Buffer.from('{"model":"v1/cx/gpt-5.5"}');
+    const res = applyModelRewrite(raw, 'application/json', { ...cfg, groups: [{ ...cfg.groups[0], enabled: false }] });
+    expect(res.rewritten).toBe(false);
+    expect(res.body).toBe(raw);
   });
 
   it('passes through malformed json', () => {
