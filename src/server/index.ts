@@ -37,7 +37,7 @@ await app.register(cookie, { secret: sessionSecret });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = process.env.WEB_ROOT ?? path.resolve(process.cwd(), 'dist/web');
-if (fs.existsSync(webRoot)) await app.register(fastifyStatic, { root: webRoot, prefix: '/', wildcard: false });
+if (fs.existsSync(webRoot)) await app.register(fastifyStatic, { root: webRoot, prefix: '/' });
 
 const PolicyPatch = z.object({
   tokenLimit: z.number().int().positive().nullable().optional(), windowStart: z.string().optional(), windowEnd: z.string().nullable().optional(), expiresAt: z.string().nullable().optional(), resetPolicy: z.enum(['manual', 'daily', 'monthly', 'custom']).optional(), actionOnLimit: z.enum(['alert', 'disable', 'none']).optional(), notes: z.string().nullable().optional(), usageMultiplier: z.number().min(0).max(100).optional()
