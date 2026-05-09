@@ -1,4 +1,4 @@
-import type { ModelRewriteConfig } from './modelRewrite.js';
+import { findModelRewriteRule, type ModelRewriteConfig } from './modelRewrite.js';
 
 export type RewriteDecision = {
   body: Buffer;
@@ -15,7 +15,7 @@ export function applyModelRewrite(rawBody: Buffer, contentType: string | undefin
   catch { return { body: rawBody, rewritten: false }; }
   if (!parsed || typeof parsed !== 'object' || typeof parsed.model !== 'string') return { body: rawBody, rewritten: false };
   if (!cfg.enabled) return { body: rawBody, rewritten: false, model: parsed.model };
-  const rule = cfg.rules.find(r => r.enabled && r.fromModel === parsed.model);
+  const rule = findModelRewriteRule(parsed.model, cfg);
   if (!rule) return { body: rawBody, rewritten: false, model: parsed.model };
   const fromModel = parsed.model;
   parsed.model = rule.toModel;

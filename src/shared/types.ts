@@ -107,6 +107,7 @@ export type ImageUsageSummary = {
 
 export type ModelRewriteRule = {
   id: number;
+  groupId?: number | null;
   enabled: boolean;
   fromModel: string;
   toModel: string;
@@ -115,7 +116,17 @@ export type ModelRewriteRule = {
   updatedAt?: string;
 };
 
-export type ModelRewriteConfig = {
+export type ModelRewriteGroup = {
+  id: number;
+  name: string;
   enabled: boolean;
   rules: ModelRewriteRule[];
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type ModelRewriteConfig = {
+  enabled: boolean;
+  groups: ModelRewriteGroup[];
+  rules?: ModelRewriteRule[];
 };
