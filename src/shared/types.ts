@@ -70,8 +70,11 @@ export type ConfigStatus = {
   nineRouterDir: string;
   dbJsonPath: string;
   usageJsonPath: string;
+  dataSqlitePath?: string;
+  usageSource?: string;
   dbJsonExists: boolean;
   usageJsonExists: boolean;
+  dataSqliteExists?: boolean;
   managerDbPath: string;
   hardDisable: boolean;
   timezone: string;
