@@ -12,3 +12,7 @@ export function dbJsonPath(baseDir = default9routerDir()): string {
 export function usageJsonPath(baseDir = default9routerDir()): string {
   return path.join(baseDir, 'usage.json');
 }
+
+export function dataSqlitePath(baseDir = default9routerDir()): string {
+  return path.join(baseDir, 'db', 'data.sqlite');
+}

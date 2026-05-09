@@ -10,7 +10,7 @@ import { openDb } from './db/index.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
-import { readApiKeys, readUsageHistory } from './parsers/reader.js';
+import { readApiKeys, readUsageHistory, usageSourceStatus } from './parsers/reader.js';
 import { default9routerDir, dbJsonPath, usageJsonPath } from './parsers/paths.js';
 import { summarizeKeyUsage } from './services/usage.js';
 import { ingestUsageHistory, readStoredUsage } from './services/usageStore.js';
@@ -60,7 +60,7 @@ function imageUsageSummary() { const today = new Date(Date.now()+7*60*60*1000).t
 function recordImageUsage(body:any) { db.prepare(`INSERT INTO image_usage_events (kind, model, size, prompt_preview, prompt_hash, input_file, output_file, drive_path, status, error, image_count, bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(body.kind, body.model, body.size ?? null, body.promptPreview ?? null, body.promptHash ?? null, body.inputFile ?? null, body.outputFile ?? null, body.drivePath ?? null, body.status, body.error ?? null, body.imageCount ?? 1, body.bytes ?? null); return { ok: true }; }
 function estimateTokens(bytes: number) { return Math.ceil(bytes / 4); }
 function maskedUser(req: any) { const auth = String(req.headers?.authorization ?? ''); if (auth) return crypto.createHash('sha256').update(auth).digest('hex').slice(0, 12); return String(req.ip ?? 'unknown'); }
-function configStatus() { const nineRouterDir = default9routerDir(); const dbPath = dbJsonPath(nineRouterDir); const usagePath = usageJsonPath(nineRouterDir); const errors: string[] = []; const dbJsonExists = fs.existsSync(dbPath); const usageJsonExists = fs.existsSync(usagePath); if (!dbJsonExists) errors.push(`Missing 9router db.json at ${dbPath}`); if (!usageJsonExists) errors.push(`Missing 9router usage.json at ${usagePath}`); return { ok: errors.length === 0, nineRouterDir, dbJsonPath: dbPath, usageJsonPath: usagePath, dbJsonExists, usageJsonExists, managerDbPath: process.env.KEY_MANAGER_DB ?? '~/.local/state/9router-key-manager/manager.sqlite', hardDisable: process.env.HARD_DISABLE === 'true', timezone: VN_TZ_LABEL, errors }; }
+function configStatus() { const nineRouterDir = default9routerDir(); const dbPath = dbJsonPath(nineRouterDir); const usagePath = usageJsonPath(nineRouterDir); const errors: string[] = []; const dbJsonExists = fs.existsSync(dbPath); const usageJsonExists = fs.existsSync(usagePath); const source = usageSourceStatus(nineRouterDir); if (!dbJsonExists) errors.push(`Missing 9router db.json at ${dbPath}`); if (!usageJsonExists) errors.push(`Missing 9router usage.json at ${usagePath}`); return { ok: errors.length === 0, nineRouterDir, dbJsonPath: dbPath, usageJsonPath: usagePath, dataSqlitePath: source.dataSqlitePath, usageSource: source.usageSource, dbJsonExists, usageJsonExists, dataSqliteExists: source.dataSqliteExists, managerDbPath: process.env.KEY_MANAGER_DB ?? '~/.local/state/9router-key-manager/manager.sqlite', hardDisable: process.env.HARD_DISABLE === 'true', timezone: VN_TZ_LABEL, errors }; }
 
 app.get('/api/health', async () => ({ ok: true, service: '9router-key-manager' }));
 app.get('/api/auth/status', async (req) => ({ authenticated: isAuthed(req) }));
