@@ -72,4 +72,4 @@ Thumbs.db
 # Test scratch
 fixtures/private/
 tmp/
-docs/model-rewrite.md
+docs
