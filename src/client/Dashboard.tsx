@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { ConfigStatus, KeyUsageSummary, ModelRewriteConfig } from '../shared/types';
+import type { ConfigStatus, FinalFallbackConfig, KeyUsageSummary, ModelRewriteConfig } from '../shared/types';
+import { finalFallbackNeedsModel } from '../shared/finalFallback';
 import { api } from './api';
 import { fmt, fromVnInput, pct, vnDateTime } from './format';
 import { dict, filterLabel, recommendation, statusLabel, type Filter, type Lang } from './i18n';
@@ -7,12 +8,12 @@ import { KeyDrawer } from './KeyDrawer';
 
 type Audit = { id: number; key_id?: string; action: string; message: string; created_at: string };
 
-type RewriteDraftRule = { id?: number; groupId?: number | null; enabled: boolean; fromModel: string; toModel: string; toModels: string[]; stickyCount: number; note?: string | null };
+type RewriteDraftRule = { id?: number; groupId?: number | null; enabled: boolean; fromModel: string; toModel: string; toModels: string[]; stickyCount: number };
 type RewriteDraftGroup = { id?: number; name: string; enabled: boolean; rules: RewriteDraftRule[] };
 
 function draftRule(r: ModelRewriteConfig['groups'][number]['rules'][number]): RewriteDraftRule {
   const targets = r.toModels?.length ? r.toModels : (r.toModel ? [r.toModel] : ['']);
-  return { id: r.id, groupId: r.groupId, enabled: r.enabled, fromModel: r.fromModel, toModel: targets[0] ?? '', toModels: targets, stickyCount: Math.max(1, Number(r.stickyCount ?? 1)), note: r.note };
+  return { id: r.id, groupId: r.groupId, enabled: r.enabled, fromModel: r.fromModel, toModel: targets[0] ?? '', toModels: targets, stickyCount: Math.max(1, Number(r.stickyCount ?? 1)) };
 }
 
 function draftGroups(config: ModelRewriteConfig | null): RewriteDraftGroup[] {
@@ -32,7 +33,7 @@ function ModelRewritePanel({ config, onSave, saving }: { config: ModelRewriteCon
   const removeGroup = (idx: number) => { setDirty(true); setGroups(groups.filter((_, i) => i !== idx)); };
   const addRule = (groupIdx: number) => {
     setDirty(true);
-    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: [...g.rules, { enabled: true, fromModel: '', toModel: '', toModels: [''], stickyCount: 1, note: '' }] } : g));
+    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: [...g.rules, { enabled: true, fromModel: '', toModel: '', toModels: [''], stickyCount: 1 }] } : g));
   };
   const patchRule = (groupIdx: number, ruleIdx: number, patch: Partial<RewriteDraftRule>) => {
     setDirty(true);
@@ -71,7 +72,21 @@ function ModelRewritePanel({ config, onSave, saving }: { config: ModelRewriteCon
     await onSave({ enabled, groups: payload });
     setDirty(false);
   };
-  return <section className="attention"><h2>Cấu hình nâng cao — Model rewrite</h2><p>Soft OFF: tắt global là proxy không rewrite model. Khi bật, hệ thống duyệt group theo thứ tự, rule khớp đầu tiên sẽ đổi A → [B, C] theo sticky và failover.</p><label><input type="checkbox" checked={enabled} onChange={e => markEnabled(e.target.checked)} /> Enable model rewrite</label><div className="rewriteList">{groups.map((g, groupIdx) => <div className="rewriteGroup" key={groupIdx}><div className="rewriteGroupHead"><label><input type="checkbox" checked={g.enabled} onChange={e => patchGroup(groupIdx, { enabled: e.target.checked })} /> Group enabled</label><label>Group name<input value={g.name} onChange={e => patchGroup(groupIdx, { name: e.target.value })} placeholder="Group A" /></label><button type="button" onClick={() => removeGroup(groupIdx)}>Remove group</button></div><div className="rewriteRules">{g.rules.map((r, ruleIdx) => <div className="rewriteRule" key={ruleIdx}><label><input type="checkbox" checked={r.enabled} onChange={e => patchRule(groupIdx, ruleIdx, { enabled: e.target.checked })} /> Rule enabled</label><label>From model<input value={r.fromModel} onChange={e => patchRule(groupIdx, ruleIdx, { fromModel: e.target.value })} placeholder="cx/gpt-5.5" /></label><div className="rewriteTargets"><span>Target models</span>{r.toModels.map((target, targetIdx) => <div className="rewriteTarget" key={targetIdx}><input value={target} onChange={e => patchTarget(groupIdx, ruleIdx, targetIdx, e.target.value)} placeholder={`v${targetIdx + 1}/cx/gpt-5.5`} /><button type="button" onClick={() => removeTarget(groupIdx, ruleIdx, targetIdx)}>Remove target</button></div>)}<button type="button" onClick={() => addTarget(groupIdx, ruleIdx)}>Add target</button></div><label>Sticky<input type="number" min={1} value={r.stickyCount} onChange={e => patchRule(groupIdx, ruleIdx, { stickyCount: Math.max(1, Number(e.target.value) || 1) })} /></label><label>Note<input value={r.note ?? ''} onChange={e => patchRule(groupIdx, ruleIdx, { note: e.target.value })} placeholder="optional" /></label><button type="button" onClick={() => removeRule(groupIdx, ruleIdx)}>Remove rule</button></div>)}</div><button type="button" onClick={() => addRule(groupIdx)}>Add rule</button></div>)}</div><div className="actions"><button type="button" onClick={addGroup}>Add group</button><button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save rewrite config'}{dirty ? ' *' : ''}</button></div></section>;
+  return <section className="attention"><h2>Cấu hình nâng cao — Model rewrite</h2><p>Soft OFF: tắt global là proxy không rewrite model. Khi bật, hệ thống duyệt group theo thứ tự, rule khớp đầu tiên sẽ đổi A → [B, C] theo sticky và failover.</p><label><input type="checkbox" checked={enabled} onChange={e => markEnabled(e.target.checked)} /> Enable model rewrite</label><div className="rewriteList">{groups.map((g, groupIdx) => <div className="rewriteGroup" key={groupIdx}><div className="rewriteGroupHead"><label><input type="checkbox" checked={g.enabled} onChange={e => patchGroup(groupIdx, { enabled: e.target.checked })} /> Group enabled</label><label>Group name<input value={g.name} onChange={e => patchGroup(groupIdx, { name: e.target.value })} placeholder="Group A" /></label><button type="button" onClick={() => removeGroup(groupIdx)}>Remove group</button></div><div className="rewriteRules">{g.rules.map((r, ruleIdx) => <div className="rewriteRule" key={ruleIdx}><label><input type="checkbox" checked={r.enabled} onChange={e => patchRule(groupIdx, ruleIdx, { enabled: e.target.checked })} /> Rule enabled</label><label>From model<input value={r.fromModel} onChange={e => patchRule(groupIdx, ruleIdx, { fromModel: e.target.value })} placeholder="cx/gpt-5.5" /></label><div className="rewriteTargets"><span>Target models</span>{r.toModels.map((target, targetIdx) => <div className="rewriteTarget" key={targetIdx}><input value={target} onChange={e => patchTarget(groupIdx, ruleIdx, targetIdx, e.target.value)} placeholder={`v${targetIdx + 1}/cx/gpt-5.5`} /><button type="button" onClick={() => removeTarget(groupIdx, ruleIdx, targetIdx)}>Remove target</button></div>)}<button type="button" onClick={() => addTarget(groupIdx, ruleIdx)}>Add target</button></div><label>Sticky<input type="number" min={1} value={r.stickyCount} onChange={e => patchRule(groupIdx, ruleIdx, { stickyCount: Math.max(1, Number(e.target.value) || 1) })} /></label><button type="button" onClick={() => removeRule(groupIdx, ruleIdx)}>Remove rule</button></div>)}</div><button type="button" onClick={() => addRule(groupIdx)}>Add rule</button></div>)}</div><div className="actions"><button type="button" onClick={addGroup}>Add group</button><button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save rewrite config'}{dirty ? ' *' : ''}</button></div></section>;
+}
+
+function FinalFallbackPanel({ config, onSave, saving }: { config: FinalFallbackConfig | null; onSave: (cfg: FinalFallbackConfig) => Promise<void>; saving: boolean }) {
+  const [enabled, setEnabled] = useState(false);
+  const [model, setModel] = useState('');
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => { if (dirty) return; setEnabled(Boolean(config?.enabled)); setModel(config?.model ?? ''); }, [config, dirty]);
+  const missingModel = finalFallbackNeedsModel({ enabled, model });
+  const save = async () => {
+    if (missingModel) return;
+    await onSave({ enabled, model: model.trim() });
+    setDirty(false);
+  };
+  return <section className="attention fallbackPanel"><h2>Cấu hình ngoài cùng — Final fallback</h2><div className="fallbackFields"><label><input type="checkbox" checked={enabled} onChange={e => { setDirty(true); setEnabled(e.target.checked); }} /> Enable final fallback</label><label>Fallback model<input value={model} onChange={e => { setDirty(true); setModel(e.target.value); }} placeholder="stable/model" /></label></div>{missingModel && <p className="formError">Fallback model is required when enabled.</p>}<div className="actions"><button onClick={save} disabled={saving || missingModel}>{saving ? 'Saving...' : 'Save final fallback'}{dirty ? ' *' : ''}</button></div></section>;
 }
 
 function attention(k: KeyUsageSummary) {
@@ -83,6 +98,7 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
   const [keys, setKeys] = useState<KeyUsageSummary[]>([]);
   const [audit, setAudit] = useState<Audit[]>([]);
   const [rewriteConfig, setRewriteConfig] = useState<ModelRewriteConfig | null>(null);
+  const [finalFallbackConfig, setFinalFallbackConfig] = useState<FinalFallbackConfig | null>(null);
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState('');
@@ -92,11 +108,12 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
   async function refresh() {
     try {
       setError('');
-      const [c, k, a, rw] = await Promise.all([api<ConfigStatus>('/api/config/status'), api<KeyUsageSummary[]>('/api/keys/usage'), api<Audit[]>('/api/audit'), api<ModelRewriteConfig>('/api/model-rewrite/config')]);
+      const [c, k, a, rw, ff] = await Promise.all([api<ConfigStatus>('/api/config/status'), api<KeyUsageSummary[]>('/api/keys/usage'), api<Audit[]>('/api/audit'), api<ModelRewriteConfig>('/api/model-rewrite/config'), api<FinalFallbackConfig>('/api/final-fallback/config')]);
       setConfig(c);
       setKeys(k);
       setAudit(a);
       setRewriteConfig(rw);
+      setFinalFallbackConfig(ff);
       if (selected) setSelected(k.find(x => x.keyId === selected.keyId) ?? null);
     } catch (e: any) {
       setError(e.message ?? String(e));
@@ -134,6 +151,16 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
     }
   }
 
+  async function saveFinalFallbackConfig(cfg: FinalFallbackConfig) {
+    setSaving('final-fallback');
+    try {
+      const next = await api<FinalFallbackConfig>('/api/final-fallback/config', { method: 'PUT', body: JSON.stringify(cfg) });
+      setFinalFallbackConfig(next);
+    } finally {
+      setSaving('');
+    }
+  }
+
   async function resetWindow(k: KeyUsageSummary) {
     if (k.resetPolicy === 'daily' || k.resetPolicy === 'monthly') { setError(t.automaticWindow); return; }
     if (!confirm(`Reset usage window for ${k.name}?`)) return;
@@ -146,5 +173,5 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
     onLogout();
   }
 
-  return <main><header><div><h1>{t.title}</h1><p>{t.subtitle}</p></div><div className="headActions"><select value={lang} onChange={e => setLang(e.target.value as Lang)}><option value="vi">VI</option><option value="en">EN</option></select><button onClick={refresh}>{t.refresh}</button><button type="button" onClick={logout}>{t.logout}</button></div></header>{error && <pre className="error">{error}</pre>}{config && !config.ok && <section className="setup"><h2>{t.setup}</h2>{config.errors.map(e => <p key={e}>{e}</p>)}</section>}<section className="cards"><div className="card primary"><span>{t.needs}</span><strong>{fmt(totals.attention)}</strong></div><div className="card"><span>{t.tokens}</span><strong>{fmt(totals.total)}</strong></div><div className="card"><span>{t.req}</span><strong>{fmt(totals.req)}</strong></div><div className="card"><span>{t.active}</span><strong>{fmt(totals.active)} / {fmt(keys.length)}</strong></div><div className="card"><span>{t.cost}</span><strong>${totals.cost.toFixed(4)}</strong></div><div className="card"><span>{t.auto}</span><strong>{config?.hardDisable ? 'ON' : 'DRY RUN'}</strong></div></section><section className="flow"><b>{t.flow}</b><span>{t.f1}</span><span>{t.f2}</span><span>{t.f3}</span><span>{t.f4}</span></section><section className="attention"><h2>{t.needs}</h2>{keys.filter(attention).length === 0 ? <p>{t.healthy}</p> : keys.filter(attention).map(k => <button className={`issue ${k.status}`} key={k.keyId} onClick={() => setSelected(k)}><b>{k.name}</b><span>{k.statusReason}</span><em>{recommendation(k.status, k.actionOnLimit, config?.hardDisable, lang)}</em></button>)}</section><section className="toolbar">{(['attention', 'all', 'danger', 'warning', 'unlimited', 'expired', 'inactive', 'ok'] as Filter[]).map(f => <button key={f} className={filter === f ? 'active' : ''} onClick={() => setFilter(f)}>{filterLabel(f, lang)}</button>)}</section><section className="tableWrap"><table><thead><tr><th>{t.status}</th><th>{t.name}</th><th>{t.usage}</th><th>{t.tokens}</th><th>{t.daily}</th><th>{t.window}</th><th>{t.action}</th><th>{t.last}</th></tr></thead><tbody>{visible.map(k => <tr key={k.keyId} onClick={() => setSelected(k)}><td><span className={`pill ${k.status}`}>{statusLabel(k.status, lang)}</span></td><td><b>{k.name}</b><br /><code>{k.keyMasked}</code></td><td><div className="meter"><div style={{ width: `${Math.min(k.percentOfLimit ?? 0, 100)}%` }} /></div>{pct(k.percentOfLimit)}</td><td>{fmt(k.total)}</td><td>{fmt(k.tokenLimit)}</td><td>{k.resetPolicy}</td><td>{k.actionOnLimit}</td><td>{vnDateTime(k.lastUsageAt)}</td></tr>)}</tbody></table></section><ModelRewritePanel config={rewriteConfig} onSave={saveRewriteConfig} saving={saving === 'model-rewrite'} />{selected && <KeyDrawer selected={selected} audit={audit} config={config} lang={lang} saving={saving} onClose={() => setSelected(null)} onQuickDaily={quickDaily} onSavePolicy={savePolicy} onResetWindow={resetWindow} />}</main>;
+  return <main><header><div><h1>{t.title}</h1><p>{t.subtitle}</p></div><div className="headActions"><select value={lang} onChange={e => setLang(e.target.value as Lang)}><option value="vi">VI</option><option value="en">EN</option></select><button onClick={refresh}>{t.refresh}</button><button type="button" onClick={logout}>{t.logout}</button></div></header>{error && <pre className="error">{error}</pre>}{config && !config.ok && <section className="setup"><h2>{t.setup}</h2>{config.errors.map(e => <p key={e}>{e}</p>)}</section>}<section className="cards"><div className="card primary"><span>{t.needs}</span><strong>{fmt(totals.attention)}</strong></div><div className="card"><span>{t.tokens}</span><strong>{fmt(totals.total)}</strong></div><div className="card"><span>{t.req}</span><strong>{fmt(totals.req)}</strong></div><div className="card"><span>{t.active}</span><strong>{fmt(totals.active)} / {fmt(keys.length)}</strong></div><div className="card"><span>{t.cost}</span><strong>${totals.cost.toFixed(4)}</strong></div><div className="card"><span>{t.auto}</span><strong>{config?.hardDisable ? 'ON' : 'DRY RUN'}</strong></div></section><section className="flow"><b>{t.flow}</b><span>{t.f1}</span><span>{t.f2}</span><span>{t.f3}</span><span>{t.f4}</span></section><section className="attention"><h2>{t.needs}</h2>{keys.filter(attention).length === 0 ? <p>{t.healthy}</p> : keys.filter(attention).map(k => <button className={`issue ${k.status}`} key={k.keyId} onClick={() => setSelected(k)}><b>{k.name}</b><span>{k.statusReason}</span><em>{recommendation(k.status, k.actionOnLimit, config?.hardDisable, lang)}</em></button>)}</section><section className="toolbar">{(['attention', 'all', 'danger', 'warning', 'unlimited', 'expired', 'inactive', 'ok'] as Filter[]).map(f => <button key={f} className={filter === f ? 'active' : ''} onClick={() => setFilter(f)}>{filterLabel(f, lang)}</button>)}</section><section className="tableWrap"><table><thead><tr><th>{t.status}</th><th>{t.name}</th><th>{t.usage}</th><th>{t.tokens}</th><th>{t.daily}</th><th>{t.window}</th><th>{t.action}</th><th>{t.last}</th></tr></thead><tbody>{visible.map(k => <tr key={k.keyId} onClick={() => setSelected(k)}><td><span className={`pill ${k.status}`}>{statusLabel(k.status, lang)}</span></td><td><b>{k.name}</b><br /><code>{k.keyMasked}</code></td><td><div className="meter"><div style={{ width: `${Math.min(k.percentOfLimit ?? 0, 100)}%` }} /></div>{pct(k.percentOfLimit)}</td><td>{fmt(k.total)}</td><td>{fmt(k.tokenLimit)}</td><td>{k.resetPolicy}</td><td>{k.actionOnLimit}</td><td>{vnDateTime(k.lastUsageAt)}</td></tr>)}</tbody></table></section><ModelRewritePanel config={rewriteConfig} onSave={saveRewriteConfig} saving={saving === 'model-rewrite'} /><FinalFallbackPanel config={finalFallbackConfig} onSave={saveFinalFallbackConfig} saving={saving === 'final-fallback'} />{selected && <KeyDrawer selected={selected} audit={audit} config={config} lang={lang} saving={saving} onClose={() => setSelected(null)} onQuickDaily={quickDaily} onSavePolicy={savePolicy} onResetWindow={resetWindow} />}</main>;
 }

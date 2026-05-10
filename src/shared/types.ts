@@ -118,7 +118,6 @@ export type ModelRewriteRule = {
   stickyCount: number;
   stickyIndex?: number;
   stickyUsed?: number;
-  note?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -136,4 +135,9 @@ export type ModelRewriteConfig = {
   enabled: boolean;
   groups: ModelRewriteGroup[];
   rules?: ModelRewriteRule[];
+};
+
+export type FinalFallbackConfig = {
+  enabled: boolean;
+  model: string;
 };

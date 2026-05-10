@@ -105,7 +105,6 @@ export function migrate(db: Database.Database): void {
       sticky_count INTEGER NOT NULL DEFAULT 1,
       sticky_index INTEGER NOT NULL DEFAULT 0,
       sticky_used INTEGER NOT NULL DEFAULT 0,
-      note TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

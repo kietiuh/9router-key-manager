@@ -10,7 +10,6 @@ export type ModelRewriteRule = {
   stickyCount: number;
   stickyIndex?: number;
   stickyUsed?: number;
-  note?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -106,7 +105,6 @@ function rowToRule(row: any): ModelRewriteRule {
     stickyCount,
     stickyIndex: normalizeStickyIndex(row.sticky_index, toModels.length),
     stickyUsed: normalizeStickyUsed(row.sticky_used, stickyCount),
-    note: row.note,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -136,7 +134,7 @@ export function getModelRewriteConfig(db: Database.Database): ModelRewriteConfig
   return { enabled: setting?.value === 'true', groups, rules: groups.flatMap(g => g.rules) };
 }
 
-type SaveRule = { id?: number; groupId?: number | null; enabled?: boolean; fromModel: string; toModel?: string | null; toModels?: string[]; stickyCount?: number; note?: string | null };
+type SaveRule = { id?: number; groupId?: number | null; enabled?: boolean; fromModel: string; toModel?: string | null; toModels?: string[]; stickyCount?: number };
 type SaveGroup = { id?: number; name?: string; enabled?: boolean; rules?: SaveRule[] };
 type SaveConfig = { enabled: boolean; groups?: SaveGroup[]; rules?: SaveRule[] };
 
@@ -150,7 +148,6 @@ function cleanRules(rules: SaveRule[] | undefined) {
       toModel: toModels[0] ?? '',
       toModels,
       stickyCount: normalizeStickyCount((r as any).stickyCount),
-      note: r.note?.trim() || null,
     };
   }).filter(r => r.fromModel && r.toModels.length);
 }
@@ -173,11 +170,11 @@ export function saveModelRewriteConfig(db: Database.Database, cfg: SaveConfig): 
     db.prepare('DELETE FROM model_rewrite_rules').run();
     db.prepare('DELETE FROM model_rewrite_groups').run();
     const insertGroup = db.prepare('INSERT INTO model_rewrite_groups (enabled, name, sort_order) VALUES (?, ?, ?)');
-    const insertRule = db.prepare('INSERT INTO model_rewrite_rules (group_id, enabled, from_model, to_model, to_models_json, sticky_count, sticky_index, sticky_used, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const insertRule = db.prepare('INSERT INTO model_rewrite_rules (group_id, enabled, from_model, to_model, to_models_json, sticky_count, sticky_index, sticky_used, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     clean.forEach((g, groupIndex) => {
       const result = insertGroup.run(g.enabled ? 1 : 0, g.name, groupIndex);
       const groupId = Number(result.lastInsertRowid);
-      g.rules.forEach((r, ruleIndex) => insertRule.run(groupId, r.enabled ? 1 : 0, r.fromModel, r.toModel, JSON.stringify(r.toModels), r.stickyCount, 0, 0, r.note, ruleIndex));
+      g.rules.forEach((r, ruleIndex) => insertRule.run(groupId, r.enabled ? 1 : 0, r.fromModel, r.toModel, JSON.stringify(r.toModels), r.stickyCount, 0, 0, ruleIndex));
     });
   })();
   return getModelRewriteConfig(db);
