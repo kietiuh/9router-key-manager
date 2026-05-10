@@ -79,7 +79,9 @@ app.post('/api/public/key-check', async (req, reply) => {
   const usage = readStoredUsage(db);
   const policy = resolvedPolicies().find(p => p.key_id === match.id);
   const summary = summarizeKeyUsage([match], usage, policy ? [policy] : []).at(0);
-  return summary;
+  if (!summary) return reply.code(404).send({ error: 'key not found' });
+  const { modelUsage: _modelUsage, models: _models, ...publicSummary } = summary;
+  return publicSummary;
 });
 
 app.register(async proxyRoutes => {

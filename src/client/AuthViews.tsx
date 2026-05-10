@@ -7,7 +7,7 @@ import { dict, type Lang, statusLabel } from './i18n';
 export function PublicCheck({ lang, setLang }: { lang: Lang; setLang: (l: Lang) => void }) {
   const t = dict[lang];
   const [key, setKey] = useState('');
-  const [result, setResult] = useState<KeyUsageSummary | null>(null);
+  const [result, setResult] = useState<Omit<KeyUsageSummary, 'modelUsage' | 'models'> | null>(null);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -17,7 +17,7 @@ export function PublicCheck({ lang, setLang }: { lang: Lang; setLang: (l: Lang) 
     setResult(null);
     setLoading(true);
     try {
-      setResult(await api<KeyUsageSummary>('/api/public/key-check', { method: 'POST', body: JSON.stringify({ key }) }));
+      setResult(await api<Omit<KeyUsageSummary, 'modelUsage' | 'models'>>('/api/public/key-check', { method: 'POST', body: JSON.stringify({ key }) }));
     } catch {
       setErr(t.notFound);
     } finally {
@@ -25,7 +25,7 @@ export function PublicCheck({ lang, setLang }: { lang: Lang; setLang: (l: Lang) 
     }
   }
 
-  return <main className="login"><form className="loginBox publicBox" onSubmit={submit}><h1>{t.publicCheck}</h1><label>{t.lang}<select value={lang} onChange={e => setLang(e.target.value as Lang)}><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label><label>{t.keyInput}<input value={key} onChange={e => setKey(e.target.value)} autoFocus /></label>{err && <p className="loginErr">{err}</p>}<button disabled={loading}>{loading ? '…' : t.check}</button>{result && <div className="publicResult"><p><b>{result.name}</b> <span className={`pill ${result.status}`}>{statusLabel(result.status, lang)}</span></p><p>{result.keyMasked}</p><div className="stats"><label>{t.tokens}<b>{fmt(result.total)}</b></label><label>{t.usage}<b>{pct(result.percentOfLimit)}</b></label><label>{t.daily}<b>{fmt(result.tokenLimit)}</b></label><label>{t.expires}<b>{publicDateTime(result.expiresAt)}</b></label><label>{t.last}<b>{vnDateTime(result.lastUsageAt)}</b></label><label>{t.window}<b>{result.resetPolicy}</b></label></div><h3>{t.models}</h3>{result.modelUsage.length ? <div className="publicModels"><table><thead><tr><th>{t.name}</th><th>{t.req}</th><th>{t.inputTokens}</th><th>{t.outputTokens}</th><th>{t.last}</th></tr></thead><tbody>{result.modelUsage.map(m => <tr key={m.model}><td>{m.model}</td><td>{fmt(m.req)}</td><td>{fmt(m.prompt)}</td><td>{fmt(m.completion)}</td><td>{vnDateTime(m.lastUsageAt)}</td></tr>)}</tbody></table></div> : <p>{t.noModels}</p>}</div>}</form></main>;
+  return <main className="login"><form className="loginBox publicBox" onSubmit={submit}><h1>{t.publicCheck}</h1><label>{t.lang}<select value={lang} onChange={e => setLang(e.target.value as Lang)}><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label><label>{t.keyInput}<input value={key} onChange={e => setKey(e.target.value)} autoFocus /></label>{err && <p className="loginErr">{err}</p>}<button disabled={loading}>{loading ? '…' : t.check}</button>{result && <div className="publicResult"><p><b>{result.name}</b> <span className={`pill ${result.status}`}>{statusLabel(result.status, lang)}</span></p><p>{result.keyMasked}</p><div className="stats"><label>{t.tokens}<b>{fmt(result.total)}</b></label><label>{t.usage}<b>{pct(result.percentOfLimit)}</b></label><label>{t.daily}<b>{fmt(result.tokenLimit)}</b></label><label>{t.expires}<b>{publicDateTime(result.expiresAt)}</b></label><label>{t.last}<b>{vnDateTime(result.lastUsageAt)}</b></label><label>{t.window}<b>{result.resetPolicy}</b></label></div></div>}</form></main>;
 }
 
 export function Login({ lang, setLang, onOk }: { lang: Lang; setLang: (l: Lang) => void; onOk: () => void }) {
