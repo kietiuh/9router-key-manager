@@ -18,8 +18,9 @@ import { startOfVietnamDayUtc, resolveWindow, VN_TZ_LABEL } from './utils/time.j
 import { runWatcherOnce, startWatcher } from './services/watcher.js';
 import { getModelRewriteConfig, rollbackModelRewriteSelection, saveModelRewriteConfig, selectModelRewriteTargets, type RewriteTargetPlan } from './services/modelRewrite.js';
 import { applyRewritePlan, parseModelRewriteRequest } from './services/modelRewriteProxy.js';
+import { getFinalFallbackConfig, saveFinalFallbackConfig } from './services/finalFallback.js';
 import { fetchUpstreamWithFailover, ProxyFailoverError, TrafficAcquireError } from './services/proxyFailover.js';
-import { TrafficLimiter, readTrafficLimitConfig } from './services/trafficLimiter.js';
+import { TrafficLimiter, readTrafficLimitConfig, type TrafficLease } from './services/trafficLimiter.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 3039);
@@ -49,6 +50,7 @@ const ImageUsageBody = z.object({ kind: z.string(), model: z.string(), size: z.s
 const ModelRewriteRuleBody = z.object({ id: z.number().int().positive().optional(), groupId: z.number().int().positive().nullable().optional(), enabled: z.boolean().optional(), fromModel: z.string(), toModel: z.string().nullable().optional(), toModels: z.array(z.string()).optional(), stickyCount: z.number().int().positive().optional() });
 const ModelRewriteGroupBody = z.object({ id: z.number().int().positive().optional(), name: z.string().optional(), enabled: z.boolean().optional(), rules: z.array(ModelRewriteRuleBody).optional() });
 const ModelRewriteConfigBody = z.object({ enabled: z.boolean(), groups: z.array(ModelRewriteGroupBody).optional(), rules: z.array(ModelRewriteRuleBody).optional() });
+const FinalFallbackConfigBody = z.object({ enabled: z.boolean(), model: z.string() });
 
 function isAuthed(req: any) { return req.unsignCookie(req.cookies?.admin_session ?? '').valid; }
 async function requireAuth(req: any, reply: any) { if (!isAuthed(req)) return reply.code(401).send({ error: 'unauthorized' }); }
@@ -105,7 +107,7 @@ app.register(async proxyRoutes => {
     const totalStarted = Date.now();
     const userId = maskedUser(req);
     const largeContextThresholdTokens = readTrafficLimitConfig(process.env).largeContextThresholdTokens;
-    let lease;
+    let lease: TrafficLease | undefined;
     let result;
     let releaseOnFinally = true;
     try {
@@ -114,6 +116,7 @@ app.register(async proxyRoutes => {
         method,
         headers,
         decision,
+        finalFallback: getFinalFallbackConfig(db),
         userId,
         largeContextThresholdTokens,
         trafficLimiter,
@@ -129,12 +132,13 @@ app.register(async proxyRoutes => {
       });
       if (!result.upstream.body) return reply.send();
       const stream = Readable.fromWeb(result.upstream.body as any);
+      const streamLease = result.lease;
       releaseOnFinally = false;
       let streamLeaseReleased = false;
       const releaseStreamLease = () => {
         if (streamLeaseReleased) return;
         streamLeaseReleased = true;
-        lease.release();
+        streamLease.release();
       };
       stream.once('close', releaseStreamLease);
       stream.once('error', releaseStreamLease);
@@ -167,6 +171,8 @@ app.register(async protectedRoutes => {
   protectedRoutes.post('/api/images/usage', async (req) => recordImageUsage(ImageUsageBody.parse(req.body)));
   protectedRoutes.get('/api/model-rewrite/config', async () => getModelRewriteConfig(db));
   protectedRoutes.put('/api/model-rewrite/config', async (req) => saveModelRewriteConfig(db, ModelRewriteConfigBody.parse(req.body)));
+  protectedRoutes.get('/api/final-fallback/config', async () => getFinalFallbackConfig(db));
+  protectedRoutes.put('/api/final-fallback/config', async (req) => saveFinalFallbackConfig(db, FinalFallbackConfigBody.parse(req.body)));
   protectedRoutes.patch('/api/keys/:keyId/policy', async (req) => { const { keyId } = req.params as { keyId: string }; ensurePolicies(); const body = PolicyPatch.parse(req.body); const current = db.prepare('SELECT * FROM key_policies WHERE key_id = ?').get(keyId) as any; if (!current) { const err = new Error('key policy not found') as Error & { statusCode?: number }; err.statusCode = 404; throw err; } const currentMultiplier = Number(current.usage_multiplier ?? 1); const nextMultiplier = body.usageMultiplier === undefined ? currentMultiplier : body.usageMultiplier; const multiplierChanged = body.usageMultiplier !== undefined && nextMultiplier !== currentMultiplier; const effectiveAt = multiplierChanged ? new Date().toISOString() : current.usage_multiplier_effective_at; db.transaction(() => { db.prepare(`UPDATE key_policies SET token_limit = ?, window_start = ?, window_end = ?, expires_at = ?, reset_policy = ?, action_on_limit = ?, notes = ?, usage_multiplier = ?, usage_multiplier_effective_at = ?, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?`).run(body.tokenLimit === undefined ? current.token_limit : body.tokenLimit, body.windowStart ?? current.window_start, body.windowEnd === undefined ? current.window_end : body.windowEnd, body.expiresAt === undefined ? current.expires_at : body.expiresAt, body.resetPolicy ?? current.reset_policy, body.actionOnLimit ?? current.action_on_limit, body.notes === undefined ? current.notes : body.notes, nextMultiplier, effectiveAt, keyId); if (multiplierChanged) db.prepare('INSERT INTO usage_multiplier_events (key_id, multiplier, effective_at) VALUES (?, ?, ?)').run(keyId, nextMultiplier, effectiveAt); })(); db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'policy.update', JSON.stringify(body)); return usageResponse().find(x => x.keyId === keyId); });
   protectedRoutes.post('/api/keys/:keyId/reset-window', async (req, reply) => { const { keyId } = req.params as { keyId: string }; const current = db.prepare('SELECT reset_policy FROM key_policies WHERE key_id = ?').get(keyId) as any; if (!current) return reply.code(404).send({ error: 'key policy not found' }); if (current.reset_policy === 'daily' || current.reset_policy === 'monthly') return reply.code(409).send({ error: `reset-window is only available for manual/custom policies; ${current.reset_policy} windows reset automatically` }); const windowStart = new Date().toISOString(); db.prepare('UPDATE key_policies SET window_start = ?, window_end = NULL, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?').run(windowStart, keyId); db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'window.reset', windowStart); return usageResponse().find(x => x.keyId === keyId); });
   protectedRoutes.post('/api/watcher/run', async () => runWatcherOnce(db, { hardDisable: process.env.HARD_DISABLE === 'true' }));

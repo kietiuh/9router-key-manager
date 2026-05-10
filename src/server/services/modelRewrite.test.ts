@@ -57,7 +57,7 @@ describe('model rewrite config', () => {
   });
 
   it('keeps legacy top-level rules usable when groups are absent or empty', () => {
-    const cfg = { enabled: true, groups: [], rules: [{ id: 1, enabled: true, fromModel: 'legacy', toModel: 'next' }] };
+    const cfg = { enabled: true, groups: [], rules: [{ id: 1, enabled: true, fromModel: 'legacy', toModel: 'next', toModels: ['next'], stickyCount: 1 }] };
     expect(rewriteModel('legacy', cfg)).toEqual({ model: 'next', rewritten: true, toModel: 'next' });
   });
 

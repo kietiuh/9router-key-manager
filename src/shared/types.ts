@@ -136,3 +136,8 @@ export type ModelRewriteConfig = {
   groups: ModelRewriteGroup[];
   rules?: ModelRewriteRule[];
 };
+
+export type FinalFallbackConfig = {
+  enabled: boolean;
+  model: string;
+};

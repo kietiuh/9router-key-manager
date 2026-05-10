@@ -1,4 +1,5 @@
 import { buildRewriteBody, type RewriteDecision } from './modelRewriteProxy.js';
+import type { FinalFallbackConfig } from './finalFallback.js';
 import type { TrafficClass, TrafficLease } from './trafficLimiter.js';
 
 export type TrafficLimiterLike = {
@@ -42,6 +43,7 @@ export type FetchUpstreamOptions = {
   method: string;
   headers: Headers;
   decision?: RewriteDecision;
+  finalFallback?: FinalFallbackConfig;
   userId: string;
   largeContextThresholdTokens: number;
   trafficLimiter: TrafficLimiterLike;
@@ -53,15 +55,21 @@ export function isRetryableUpstreamStatus(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
-function attemptModels(decision: RewriteDecision | undefined): string[] {
-  if (!decision) return ['unknown'];
-  if (decision.rewritten && decision.targets.length) return decision.targets;
-  return [decision.model ?? 'unknown'];
+function appendFallback(models: string[], decision: RewriteDecision | undefined, finalFallback: FinalFallbackConfig | undefined): string[] {
+  const fallbackModel = finalFallback?.model?.trim();
+  if (!finalFallback?.enabled || !fallbackModel || !decision?.parsedBody?.model) return models;
+  if (models.includes(fallbackModel)) return models;
+  return [...models, fallbackModel];
+}
+
+function attemptModels(decision: RewriteDecision | undefined, finalFallback: FinalFallbackConfig | undefined): string[] {
+  const models = !decision ? ['unknown'] : decision.rewritten && decision.targets.length ? decision.targets : [decision.model ?? 'unknown'];
+  return appendFallback(models, decision, finalFallback);
 }
 
 function bodyForAttempt(decision: RewriteDecision | undefined, model: string): Buffer | undefined {
   if (!decision) return undefined;
-  if (decision.rewritten) return buildRewriteBody(decision, model);
+  if (decision.parsedBody && decision.model !== model) return buildRewriteBody(decision, model);
   return decision.body;
 }
 
@@ -86,7 +94,7 @@ function errorStatus(err: any): { statusCode: number; type: string; message: str
 
 export async function fetchUpstreamWithFailover(options: FetchUpstreamOptions): Promise<FetchUpstreamResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const models = attemptModels(options.decision);
+  const models = attemptModels(options.decision, options.finalFallback);
   for (let attemptIndex = 0; attemptIndex < models.length; attemptIndex++) {
     const model = models[attemptIndex];
     const body = bodyForAttempt(options.decision, model);
