@@ -233,3 +233,23 @@ export function selectModelRewriteTargets(db: Database.Database, model: unknown)
     };
   })(model);
 }
+
+export function rollbackModelRewriteSelection(db: Database.Database, plan: RewriteTargetPlan): void {
+  db.transaction(() => {
+    const cfg = getModelRewriteConfig(db);
+    const rule = cfg.rules?.find(r => r.id === plan.ruleId);
+    if (!rule) return;
+    const targets = targetsForRule(rule);
+    if (!targets.length) return;
+    const stickyCount = normalizeStickyCount(rule.stickyCount);
+    const stickyIndex = normalizeStickyIndex(rule.stickyIndex, targets.length);
+    const stickyUsed = normalizeStickyUsed(rule.stickyUsed, stickyCount);
+    let previousIndex = stickyIndex;
+    let previousUsed = stickyUsed - 1;
+    if (previousUsed < 0) {
+      previousIndex = (stickyIndex - 1 + targets.length) % targets.length;
+      previousUsed = stickyCount - 1;
+    }
+    db.prepare('UPDATE model_rewrite_rules SET sticky_index = ?, sticky_used = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(previousIndex, previousUsed, plan.ruleId);
+  })();
+}

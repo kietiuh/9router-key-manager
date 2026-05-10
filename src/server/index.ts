@@ -16,7 +16,7 @@ import { summarizeKeyUsage } from './services/usage.js';
 import { ingestUsageHistory, readStoredUsage } from './services/usageStore.js';
 import { startOfVietnamDayUtc, resolveWindow, VN_TZ_LABEL } from './utils/time.js';
 import { runWatcherOnce, startWatcher } from './services/watcher.js';
-import { getModelRewriteConfig, saveModelRewriteConfig, selectModelRewriteTargets } from './services/modelRewrite.js';
+import { getModelRewriteConfig, rollbackModelRewriteSelection, saveModelRewriteConfig, selectModelRewriteTargets, type RewriteTargetPlan } from './services/modelRewrite.js';
 import { applyRewritePlan, parseModelRewriteRequest } from './services/modelRewriteProxy.js';
 import { fetchUpstreamWithFailover, ProxyFailoverError, TrafficAcquireError } from './services/proxyFailover.js';
 import { TrafficLimiter, readTrafficLimitConfig } from './services/trafficLimiter.js';
@@ -93,11 +93,12 @@ app.register(async proxyRoutes => {
     }
 
     let decision;
+    let rewritePlan: RewriteTargetPlan | undefined;
     if (method !== 'GET' && method !== 'HEAD') {
       const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body == null ? '' : typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
       const parsed = parseModelRewriteRequest(raw, req.headers['content-type']);
-      const plan = parsed.model ? selectModelRewriteTargets(db, parsed.model) : undefined;
-      decision = applyRewritePlan(parsed, plan);
+      rewritePlan = parsed.model ? selectModelRewriteTargets(db, parsed.model) : undefined;
+      decision = applyRewritePlan(parsed, rewritePlan);
       if (decision.rewritten) req.log.info({ fromModel: decision.fromModel, toModel: decision.toModel, targets: decision.targets }, 'model rewritten');
     }
 
@@ -129,12 +130,19 @@ app.register(async proxyRoutes => {
       if (!result.upstream.body) return reply.send();
       const stream = Readable.fromWeb(result.upstream.body as any);
       releaseOnFinally = false;
-      stream.once('close', () => lease.release());
-      stream.once('error', () => lease.release());
-      stream.once('end', () => lease.release());
+      let streamLeaseReleased = false;
+      const releaseStreamLease = () => {
+        if (streamLeaseReleased) return;
+        streamLeaseReleased = true;
+        lease.release();
+      };
+      stream.once('close', releaseStreamLease);
+      stream.once('error', releaseStreamLease);
+      stream.once('end', releaseStreamLease);
       return reply.send(stream);
     } catch (err: any) {
       if (err instanceof TrafficAcquireError) {
+        if (err.attemptIndex === 0 && rewritePlan) rollbackModelRewriteSelection(db, rewritePlan);
         req.log.warn({ model: err.model, userId, errorType: 'queue_rejected', error: err.message, limiter: err.snapshot }, 'traffic limited request rejected');
         reply.header('retry-after', String(err.retryAfter));
         return reply.code(err.statusCode).send({ error: { message: 'Server busy, retry later', type: err.type, retry_after: err.retryAfter } });

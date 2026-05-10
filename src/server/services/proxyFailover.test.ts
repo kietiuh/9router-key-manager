@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fetchUpstreamWithFailover } from './proxyFailover.js';
+import { fetchUpstreamWithFailover, TrafficAcquireError } from './proxyFailover.js';
 import type { RewriteDecision } from './modelRewriteProxy.js';
 
 function rewriteDecision(targets: string[]): RewriteDecision {
@@ -105,5 +105,36 @@ describe('fetchUpstreamWithFailover', () => {
     expect(limit.released).toEqual(['v1']);
     expect(result.model).toBe('v2');
     result.lease.release();
+  });
+
+  it('reports the rejected attempt index when traffic acquire fails', async () => {
+    await expect(fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/chat/completions',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1', 'v2']),
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      trafficLimiter: {
+        snapshot: () => [],
+        acquire: async () => { throw new Error('queue full'); },
+      },
+    })).rejects.toMatchObject({
+      attemptIndex: 0,
+      model: 'v1',
+    });
+
+    await expect(fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/chat/completions',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1', 'v2']),
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      trafficLimiter: {
+        snapshot: () => [],
+        acquire: async () => { throw new Error('queue full'); },
+      },
+    })).rejects.toBeInstanceOf(TrafficAcquireError);
   });
 });

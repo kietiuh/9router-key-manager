@@ -24,7 +24,7 @@ export class TrafficAcquireError extends Error {
   statusCode = 429;
   retryAfter = 10;
   type = 'queue_full';
-  constructor(message: string, public readonly cause: unknown, public readonly snapshot: unknown, public readonly model: string) {
+  constructor(message: string, public readonly cause: unknown, public readonly snapshot: unknown, public readonly model: string, public readonly attemptIndex: number) {
     super(message);
   }
 }
@@ -97,7 +97,7 @@ export async function fetchUpstreamWithFailover(options: FetchUpstreamOptions): 
     try {
       lease = await options.trafficLimiter.acquire({ model, userId: options.userId, estimatedInputTokens, isLargeContext });
     } catch (err: any) {
-      throw new TrafficAcquireError(err?.message ?? 'traffic queue rejected', err, options.trafficLimiter.snapshot(), model);
+      throw new TrafficAcquireError(err?.message ?? 'traffic queue rejected', err, options.trafficLimiter.snapshot(), model, attemptIndex);
     }
 
     const attemptHeaders = cloneHeaders(options.headers);

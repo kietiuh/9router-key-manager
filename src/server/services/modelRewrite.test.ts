@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { migrate } from '../db/schema.js';
-import { getModelRewriteConfig, rewriteModel, saveModelRewriteConfig, selectModelRewriteTargets } from './modelRewrite.js';
+import { getModelRewriteConfig, rewriteModel, rollbackModelRewriteSelection, saveModelRewriteConfig, selectModelRewriteTargets } from './modelRewrite.js';
 
 function memDb() {
   const db = new Database(':memory:');
@@ -148,6 +148,24 @@ describe('model rewrite config', () => {
 
     expect(selectModelRewriteTargets(db, 'source')).toBeUndefined();
     db.prepare("UPDATE app_settings SET value = 'true' WHERE key = 'model_rewrite_enabled'").run();
+    expect(selectModelRewriteTargets(db, 'source')?.selectedModel).toBe('v1');
+  });
+
+  it('rolls back a sticky selection when the request is rejected before upstream', () => {
+    const db = memDb();
+    saveModelRewriteConfig(db, { enabled: true, groups: [
+      { name: 'Main', rules: [
+        { fromModel: 'source', toModels: ['v1', 'v2'], stickyCount: 2 },
+      ] },
+    ] });
+
+    const plan = selectModelRewriteTargets(db, 'source');
+    expect(plan?.selectedModel).toBe('v1');
+    expect(getModelRewriteConfig(db).groups[0].rules[0].stickyUsed).toBe(1);
+
+    rollbackModelRewriteSelection(db, plan!);
+
+    expect(getModelRewriteConfig(db).groups[0].rules[0].stickyUsed).toBe(0);
     expect(selectModelRewriteTargets(db, 'source')?.selectedModel).toBe('v1');
   });
 
