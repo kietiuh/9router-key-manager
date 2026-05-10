@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { migrate } from '../db/schema.js';
-import { getModelRewriteConfig, rewriteModel, saveModelRewriteConfig } from './modelRewrite.js';
+import { getModelRewriteConfig, rewriteModel, rollbackModelRewriteSelection, saveModelRewriteConfig, selectModelRewriteTargets } from './modelRewrite.js';
 
 function memDb() {
   const db = new Database(':memory:');
@@ -64,6 +64,111 @@ describe('model rewrite config', () => {
     expect(cfg.groups[0].rules[0].note).toBe('x');
   });
 
+  it('normalizes multiple targets and sticky count when saving groups', () => {
+    const db = memDb();
+    const cfg = saveModelRewriteConfig(db, { enabled: true, groups: [
+      { name: '  Group A  ', rules: [
+        { fromModel: '  A  ', toModel: ' legacy ', toModels: [' v1 ', '', 'v2', 'v1'], stickyCount: 2, note: ' x ' },
+      ] },
+    ] });
+    expect(cfg.groups[0].rules).toHaveLength(1);
+    expect(cfg.groups[0].rules[0]).toMatchObject({
+      fromModel: 'A',
+      toModel: 'v1',
+      toModels: ['v1', 'v2'],
+      stickyCount: 2,
+      stickyIndex: 0,
+      stickyUsed: 0,
+      note: 'x',
+    });
+  });
+
+  it('falls back to legacy toModel when old rows do not have toModels JSON', () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE model_rewrite_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE model_rewrite_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        from_model TEXT NOT NULL,
+        to_model TEXT NOT NULL,
+        note TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO app_settings (key, value) VALUES ('model_rewrite_enabled', 'true');
+      INSERT INTO model_rewrite_groups (name, enabled, sort_order) VALUES ('Default', 1, 0);
+      INSERT INTO model_rewrite_rules (group_id, enabled, from_model, to_model, note, sort_order) VALUES (1, 1, 'legacy', 'next', 'old', 0);
+    `);
+    migrate(db);
+    const rule = getModelRewriteConfig(db).groups[0].rules[0];
+    expect(rule.toModel).toBe('next');
+    expect(rule.toModels).toEqual(['next']);
+    expect(rule.stickyCount).toBe(1);
+    expect(rule.stickyIndex).toBe(0);
+    expect(rule.stickyUsed).toBe(0);
+  });
+
+  it('selects sticky targets and rotates after stickyCount requests', () => {
+    const db = memDb();
+    saveModelRewriteConfig(db, { enabled: true, groups: [
+      { name: 'Main', rules: [
+        { fromModel: 'source', toModels: ['v1', 'v2', 'v3'], stickyCount: 2 },
+      ] },
+    ] });
+
+    const plans = Array.from({ length: 7 }, () => selectModelRewriteTargets(db, 'source'));
+
+    expect(plans.map(p => p?.selectedModel)).toEqual(['v1', 'v1', 'v2', 'v2', 'v3', 'v3', 'v1']);
+    expect(plans[4]?.targets).toEqual(['v3', 'v1', 'v2']);
+  });
+
+  it('does not advance sticky state when global rewrite is disabled', () => {
+    const db = memDb();
+    saveModelRewriteConfig(db, { enabled: true, groups: [
+      { name: 'Main', rules: [
+        { fromModel: 'source', toModels: ['v1', 'v2'], stickyCount: 1 },
+      ] },
+    ] });
+    db.prepare("UPDATE app_settings SET value = 'false' WHERE key = 'model_rewrite_enabled'").run();
+
+    expect(selectModelRewriteTargets(db, 'source')).toBeUndefined();
+    db.prepare("UPDATE app_settings SET value = 'true' WHERE key = 'model_rewrite_enabled'").run();
+    expect(selectModelRewriteTargets(db, 'source')?.selectedModel).toBe('v1');
+  });
+
+  it('rolls back a sticky selection when the request is rejected before upstream', () => {
+    const db = memDb();
+    saveModelRewriteConfig(db, { enabled: true, groups: [
+      { name: 'Main', rules: [
+        { fromModel: 'source', toModels: ['v1', 'v2'], stickyCount: 2 },
+      ] },
+    ] });
+
+    const plan = selectModelRewriteTargets(db, 'source');
+    expect(plan?.selectedModel).toBe('v1');
+    expect(getModelRewriteConfig(db).groups[0].rules[0].stickyUsed).toBe(1);
+
+    rollbackModelRewriteSelection(db, plan!);
+
+    expect(getModelRewriteConfig(db).groups[0].rules[0].stickyUsed).toBe(0);
+    expect(selectModelRewriteTargets(db, 'source')?.selectedModel).toBe('v1');
+  });
+
   it('migrates existing flat rules into the Default group', () => {
     const db = new Database(':memory:');
     db.exec(`
@@ -91,6 +196,7 @@ describe('model rewrite config', () => {
     expect(cfg.groups[0].name).toBe('Default');
     expect(cfg.groups[0].rules[0].fromModel).toBe('legacy');
     expect(cfg.groups[0].rules[0].toModel).toBe('next');
+    expect(cfg.groups[0].rules[0].toModels).toEqual(['next']);
     expect(cfg.rules?.[0].fromModel).toBe('legacy');
   });
 });

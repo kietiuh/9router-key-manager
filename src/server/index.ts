@@ -16,8 +16,9 @@ import { summarizeKeyUsage } from './services/usage.js';
 import { ingestUsageHistory, readStoredUsage } from './services/usageStore.js';
 import { startOfVietnamDayUtc, resolveWindow, VN_TZ_LABEL } from './utils/time.js';
 import { runWatcherOnce, startWatcher } from './services/watcher.js';
-import { getModelRewriteConfig, saveModelRewriteConfig } from './services/modelRewrite.js';
-import { applyModelRewrite } from './services/modelRewriteProxy.js';
+import { getModelRewriteConfig, rollbackModelRewriteSelection, saveModelRewriteConfig, selectModelRewriteTargets, type RewriteTargetPlan } from './services/modelRewrite.js';
+import { applyRewritePlan, parseModelRewriteRequest } from './services/modelRewriteProxy.js';
+import { fetchUpstreamWithFailover, ProxyFailoverError, TrafficAcquireError } from './services/proxyFailover.js';
 import { TrafficLimiter, readTrafficLimitConfig } from './services/trafficLimiter.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
@@ -45,7 +46,7 @@ const PolicyPatch = z.object({
 const LoginBody = z.object({ password: z.string() });
 const PublicKeyCheckBody = z.object({ key: z.string().min(8) });
 const ImageUsageBody = z.object({ kind: z.string(), model: z.string(), size: z.string().optional(), promptPreview: z.string().optional(), promptHash: z.string().optional(), inputFile: z.string().optional(), outputFile: z.string().optional(), drivePath: z.string().optional(), status: z.string(), error: z.string().optional(), imageCount: z.number().int().positive().optional(), bytes: z.number().int().nonnegative().optional() });
-const ModelRewriteRuleBody = z.object({ id: z.number().int().positive().optional(), groupId: z.number().int().positive().nullable().optional(), enabled: z.boolean().optional(), fromModel: z.string(), toModel: z.string(), note: z.string().nullable().optional() });
+const ModelRewriteRuleBody = z.object({ id: z.number().int().positive().optional(), groupId: z.number().int().positive().nullable().optional(), enabled: z.boolean().optional(), fromModel: z.string(), toModel: z.string().nullable().optional(), toModels: z.array(z.string()).optional(), stickyCount: z.number().int().positive().optional(), note: z.string().nullable().optional() });
 const ModelRewriteGroupBody = z.object({ id: z.number().int().positive().optional(), name: z.string().optional(), enabled: z.boolean().optional(), rules: z.array(ModelRewriteRuleBody).optional() });
 const ModelRewriteConfigBody = z.object({ enabled: z.boolean(), groups: z.array(ModelRewriteGroupBody).optional(), rules: z.array(ModelRewriteRuleBody).optional() });
 
@@ -58,7 +59,6 @@ function refreshUsageStore() { ingestUsageHistory(db, readUsageHistory()); }
 function usageResponse() { const keys = ensurePolicies(); refreshUsageStore(); const usage = readStoredUsage(db); const policies = resolvedPolicies(); return summarizeKeyUsage(keys, usage, policies).sort((a, b) => { const rank = { danger: 0, expired: 1, warning: 2, unlimited: 3, ok: 4, inactive: 5 } as const; return rank[a.status] - rank[b.status] || (b.percentOfLimit ?? -1) - (a.percentOfLimit ?? -1); }); }
 function imageUsageSummary() { const today = new Date(Date.now()+7*60*60*1000).toISOString().slice(0,10); const rows = db.prepare('SELECT * FROM image_usage_events ORDER BY id DESC LIMIT 200').all() as any[]; const total = db.prepare('SELECT COALESCE(SUM(image_count),0) images, COALESCE(SUM(bytes),0) bytes, SUM(CASE WHEN status=\'success\' THEN 1 ELSE 0 END) success, SUM(CASE WHEN status!=\'success\' THEN 1 ELSE 0 END) errors FROM image_usage_events').get() as any; const todayImages = db.prepare("SELECT COALESCE(SUM(image_count),0) images FROM image_usage_events WHERE date(datetime(created_at, '+7 hours')) = ?").get(today) as any; return { todayImages: Number(todayImages.images||0), totalImages: Number(total.images||0), success: Number(total.success||0), errors: Number(total.errors||0), bytes: Number(total.bytes||0), events: rows }; }
 function recordImageUsage(body:any) { db.prepare(`INSERT INTO image_usage_events (kind, model, size, prompt_preview, prompt_hash, input_file, output_file, drive_path, status, error, image_count, bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(body.kind, body.model, body.size ?? null, body.promptPreview ?? null, body.promptHash ?? null, body.inputFile ?? null, body.outputFile ?? null, body.drivePath ?? null, body.status, body.error ?? null, body.imageCount ?? 1, body.bytes ?? null); return { ok: true }; }
-function estimateTokens(bytes: number) { return Math.ceil(bytes / 4); }
 function maskedUser(req: any) { const auth = String(req.headers?.authorization ?? ''); if (auth) return crypto.createHash('sha256').update(auth).digest('hex').slice(0, 12); return String(req.ip ?? 'unknown'); }
 function configStatus() { const nineRouterDir = default9routerDir(); const dbPath = dbJsonPath(nineRouterDir); const usagePath = usageJsonPath(nineRouterDir); const errors: string[] = []; const dbJsonExists = fs.existsSync(dbPath); const usageJsonExists = fs.existsSync(usagePath); const source = usageSourceStatus(nineRouterDir); if (!dbJsonExists) errors.push(`Missing 9router db.json at ${dbPath}`); if (!usageJsonExists) errors.push(`Missing 9router usage.json at ${usagePath}`); return { ok: errors.length === 0, nineRouterDir, dbJsonPath: dbPath, usageJsonPath: usagePath, dataSqlitePath: source.dataSqlitePath, usageSource: source.usageSource, dbJsonExists, usageJsonExists, dataSqliteExists: source.dataSqliteExists, managerDbPath: process.env.KEY_MANAGER_DB ?? '~/.local/state/9router-key-manager/manager.sqlite', hardDisable: process.env.HARD_DISABLE === 'true', timezone: VN_TZ_LABEL, errors }; }
 
@@ -92,56 +92,69 @@ app.register(async proxyRoutes => {
       else headers.set(key, String(value));
     }
 
-    let body: Buffer | undefined;
+    let decision;
+    let rewritePlan: RewriteTargetPlan | undefined;
     if (method !== 'GET' && method !== 'HEAD') {
       const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body == null ? '' : typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
-      const decision = applyModelRewrite(raw, req.headers['content-type'], getModelRewriteConfig(db));
-      body = decision.body;
-      headers.set('content-length', String(body.length));
-      if (decision.rewritten) req.log.info({ fromModel: decision.fromModel, toModel: decision.toModel }, 'model rewritten');
+      const parsed = parseModelRewriteRequest(raw, req.headers['content-type']);
+      rewritePlan = parsed.model ? selectModelRewriteTargets(db, parsed.model) : undefined;
+      decision = applyRewritePlan(parsed, rewritePlan);
+      if (decision.rewritten) req.log.info({ fromModel: decision.fromModel, toModel: decision.toModel, targets: decision.targets }, 'model rewritten');
     }
 
     const totalStarted = Date.now();
-    const bodyBytes = body?.length ?? 0;
-    const estimatedInputTokens = estimateTokens(bodyBytes);
-    const model = (() => { try { return body ? JSON.parse(body.toString('utf8')).model : undefined; } catch { return undefined; } })() ?? 'unknown';
     const userId = maskedUser(req);
-    const isLargeContext = estimatedInputTokens > readTrafficLimitConfig(process.env).largeContextThresholdTokens;
+    const largeContextThresholdTokens = readTrafficLimitConfig(process.env).largeContextThresholdTokens;
     let lease;
-    try {
-      lease = await trafficLimiter.acquire({ model, userId, estimatedInputTokens, isLargeContext });
-    } catch (err: any) {
-      req.log.warn({ model, userId, bodyBytes, estimatedInputTokens, errorType: 'queue_rejected', error: err?.message, limiter: trafficLimiter.snapshot() }, 'traffic limited request rejected');
-      reply.header('retry-after', '10');
-      return reply.code(429).send({ error: { message: 'Server busy, retry later', type: 'queue_full', retry_after: 10 } });
-    }
-    const upstreamStarted = Date.now();
+    let result;
     let releaseOnFinally = true;
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), lease.timeoutMs);
-      const upstream = await fetch(`${nineRouterUpstream}${req.raw.url}`, { method, headers, body: body as any, duplex: 'half', signal: controller.signal } as RequestInit & { duplex: 'half' });
-      clearTimeout(timeout);
-      const upstreamMs = Date.now() - upstreamStarted;
-      req.log.info({ model, userId, bodyBytes, estimatedInputTokens, isLargeContext, queuedMs: lease.queuedMs, upstreamMs, totalMs: Date.now() - totalStarted, upstreamStatus: upstream.status, limiter: trafficLimiter.snapshot() }, 'traffic proxied request');
-      reply.header('x-queue-time-ms', String(lease.queuedMs));
-      reply.header('x-upstream-time-ms', String(upstreamMs));
-      reply.code(upstream.status);
-      upstream.headers.forEach((value, key) => {
+      result = await fetchUpstreamWithFailover({
+        upstreamUrl: `${nineRouterUpstream}${req.raw.url}`,
+        method,
+        headers,
+        decision,
+        userId,
+        largeContextThresholdTokens,
+        trafficLimiter,
+        log: (data, message) => req.log.info(data, message),
+      });
+      lease = result.lease;
+      req.log.info({ model: result.model, userId, bodyBytes: result.bodyBytes, estimatedInputTokens: result.estimatedInputTokens, isLargeContext: result.isLargeContext, queuedMs: result.queuedMs, upstreamMs: result.upstreamMs, totalMs: Date.now() - totalStarted, upstreamStatus: result.upstream.status, attemptIndex: result.attemptIndex, attemptCount: result.attemptCount, limiter: trafficLimiter.snapshot() }, 'traffic proxied request');
+      reply.header('x-queue-time-ms', String(result.queuedMs));
+      reply.header('x-upstream-time-ms', String(result.upstreamMs));
+      reply.code(result.upstream.status);
+      result.upstream.headers.forEach((value, key) => {
         if (!['connection', 'content-encoding', 'transfer-encoding'].includes(key.toLowerCase())) reply.header(key, value);
       });
-      if (!upstream.body) return reply.send();
-      const stream = Readable.fromWeb(upstream.body as any);
+      if (!result.upstream.body) return reply.send();
+      const stream = Readable.fromWeb(result.upstream.body as any);
       releaseOnFinally = false;
-      stream.once('close', () => lease.release());
-      stream.once('error', () => lease.release());
-      stream.once('end', () => lease.release());
+      let streamLeaseReleased = false;
+      const releaseStreamLease = () => {
+        if (streamLeaseReleased) return;
+        streamLeaseReleased = true;
+        lease.release();
+      };
+      stream.once('close', releaseStreamLease);
+      stream.once('error', releaseStreamLease);
+      stream.once('end', releaseStreamLease);
       return reply.send(stream);
     } catch (err: any) {
-      req.log.error({ model, userId, bodyBytes, estimatedInputTokens, isLargeContext, queuedMs: lease.queuedMs, upstreamMs: Date.now() - upstreamStarted, totalMs: Date.now() - totalStarted, errorType: err?.name === 'AbortError' ? 'upstream_timeout' : 'proxy_error', error: err?.message }, 'traffic proxied request failed');
-      return reply.code(err?.name === 'AbortError' ? 504 : 502).send({ error: { message: err?.name === 'AbortError' ? 'Upstream timeout' : 'Upstream proxy error', type: err?.name === 'AbortError' ? 'upstream_timeout' : 'proxy_error' } });
+      if (err instanceof TrafficAcquireError) {
+        if (err.attemptIndex === 0 && rewritePlan) rollbackModelRewriteSelection(db, rewritePlan);
+        req.log.warn({ model: err.model, userId, errorType: 'queue_rejected', error: err.message, limiter: err.snapshot }, 'traffic limited request rejected');
+        reply.header('retry-after', String(err.retryAfter));
+        return reply.code(err.statusCode).send({ error: { message: 'Server busy, retry later', type: err.type, retry_after: err.retryAfter } });
+      }
+      if (err instanceof ProxyFailoverError) {
+        req.log.error({ model: err.model, userId, totalMs: Date.now() - totalStarted, errorType: err.type, error: err.message }, 'traffic proxied request failed');
+        return reply.code(err.statusCode).send({ error: { message: err.message, type: err.type } });
+      }
+      req.log.error({ userId, totalMs: Date.now() - totalStarted, errorType: 'proxy_error', error: err?.message }, 'traffic proxied request failed');
+      return reply.code(502).send({ error: { message: 'Upstream proxy error', type: 'proxy_error' } });
     } finally {
-      if (releaseOnFinally) lease.release();
+      if (releaseOnFinally) lease?.release();
     }
   });
 });

@@ -101,6 +101,10 @@ export function migrate(db: Database.Database): void {
       enabled INTEGER NOT NULL DEFAULT 1,
       from_model TEXT NOT NULL,
       to_model TEXT NOT NULL,
+      to_models_json TEXT,
+      sticky_count INTEGER NOT NULL DEFAULT 1,
+      sticky_index INTEGER NOT NULL DEFAULT 0,
+      sticky_used INTEGER NOT NULL DEFAULT 0,
       note TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -116,6 +120,10 @@ export function migrate(db: Database.Database): void {
   const rewriteNames = new Set(rewriteCols.map(c => c.name));
   if (!rewriteNames.has('group_id')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN group_id INTEGER');
   if (!rewriteNames.has('sort_order')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0');
+  if (!rewriteNames.has('to_models_json')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN to_models_json TEXT');
+  if (!rewriteNames.has('sticky_count')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN sticky_count INTEGER NOT NULL DEFAULT 1');
+  if (!rewriteNames.has('sticky_index')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN sticky_index INTEGER NOT NULL DEFAULT 0');
+  if (!rewriteNames.has('sticky_used')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN sticky_used INTEGER NOT NULL DEFAULT 0');
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_model_rewrite_groups_order ON model_rewrite_groups (sort_order, id);
     CREATE INDEX IF NOT EXISTS idx_model_rewrite_rules_group_order ON model_rewrite_rules (group_id, sort_order, id);

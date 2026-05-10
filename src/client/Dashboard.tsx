@@ -7,12 +7,17 @@ import { KeyDrawer } from './KeyDrawer';
 
 type Audit = { id: number; key_id?: string; action: string; message: string; created_at: string };
 
-type RewriteDraftRule = { id?: number; groupId?: number | null; enabled: boolean; fromModel: string; toModel: string; note?: string | null };
+type RewriteDraftRule = { id?: number; groupId?: number | null; enabled: boolean; fromModel: string; toModel: string; toModels: string[]; stickyCount: number; note?: string | null };
 type RewriteDraftGroup = { id?: number; name: string; enabled: boolean; rules: RewriteDraftRule[] };
 
+function draftRule(r: ModelRewriteConfig['groups'][number]['rules'][number]): RewriteDraftRule {
+  const targets = r.toModels?.length ? r.toModels : (r.toModel ? [r.toModel] : ['']);
+  return { id: r.id, groupId: r.groupId, enabled: r.enabled, fromModel: r.fromModel, toModel: targets[0] ?? '', toModels: targets, stickyCount: Math.max(1, Number(r.stickyCount ?? 1)), note: r.note };
+}
+
 function draftGroups(config: ModelRewriteConfig | null): RewriteDraftGroup[] {
-  if (config?.groups?.length) return config.groups.map(g => ({ id: g.id, name: g.name, enabled: g.enabled, rules: g.rules.map(r => ({ id: r.id, groupId: r.groupId, enabled: r.enabled, fromModel: r.fromModel, toModel: r.toModel, note: r.note })) }));
-  if (config?.rules?.length) return [{ name: 'Default', enabled: true, rules: config.rules.map(r => ({ id: r.id, groupId: r.groupId, enabled: r.enabled, fromModel: r.fromModel, toModel: r.toModel, note: r.note })) }];
+  if (config?.groups?.length) return config.groups.map(g => ({ id: g.id, name: g.name, enabled: g.enabled, rules: g.rules.map(draftRule) }));
+  if (config?.rules?.length) return [{ name: 'Default', enabled: true, rules: config.rules.map(draftRule) }];
   return [];
 }
 
@@ -27,18 +32,46 @@ function ModelRewritePanel({ config, onSave, saving }: { config: ModelRewriteCon
   const removeGroup = (idx: number) => { setDirty(true); setGroups(groups.filter((_, i) => i !== idx)); };
   const addRule = (groupIdx: number) => {
     setDirty(true);
-    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: [...g.rules, { enabled: true, fromModel: '', toModel: '', note: '' }] } : g));
+    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: [...g.rules, { enabled: true, fromModel: '', toModel: '', toModels: [''], stickyCount: 1, note: '' }] } : g));
   };
   const patchRule = (groupIdx: number, ruleIdx: number, patch: Partial<RewriteDraftRule>) => {
     setDirty(true);
     setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => j === ruleIdx ? { ...r, ...patch } : r) } : g));
   };
+  const patchTarget = (groupIdx: number, ruleIdx: number, targetIdx: number, value: string) => {
+    setDirty(true);
+    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => {
+      if (j !== ruleIdx) return r;
+      const toModels = r.toModels.map((target, k) => k === targetIdx ? value : target);
+      return { ...r, toModels, toModel: toModels[0] ?? '' };
+    }) } : g));
+  };
+  const addTarget = (groupIdx: number, ruleIdx: number) => {
+    setDirty(true);
+    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => j === ruleIdx ? { ...r, toModels: [...r.toModels, ''] } : r) } : g));
+  };
+  const removeTarget = (groupIdx: number, ruleIdx: number, targetIdx: number) => {
+    setDirty(true);
+    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => {
+      if (j !== ruleIdx) return r;
+      const toModels = r.toModels.filter((_, k) => k !== targetIdx);
+      const next = toModels.length ? toModels : [''];
+      return { ...r, toModels: next, toModel: next[0] ?? '' };
+    }) } : g));
+  };
   const removeRule = (groupIdx: number, ruleIdx: number) => {
     setDirty(true);
     setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.filter((_, j) => j !== ruleIdx) } : g));
   };
-  const save = async () => { await onSave({ enabled, groups }); setDirty(false); };
-  return <section className="attention"><h2>Cấu hình nâng cao — Model rewrite</h2><p>Soft OFF: tắt global là proxy không rewrite model. Khi bật, hệ thống duyệt group theo thứ tự, bỏ qua group/rule đang tắt, rule khớp đầu tiên sẽ đổi A → B.</p><label><input type="checkbox" checked={enabled} onChange={e => markEnabled(e.target.checked)} /> Enable model rewrite</label><div className="rewriteList">{groups.map((g, groupIdx) => <div className="rewriteGroup" key={groupIdx}><div className="rewriteGroupHead"><label><input type="checkbox" checked={g.enabled} onChange={e => patchGroup(groupIdx, { enabled: e.target.checked })} /> Group enabled</label><label>Group name<input value={g.name} onChange={e => patchGroup(groupIdx, { name: e.target.value })} placeholder="Group A" /></label><button type="button" onClick={() => removeGroup(groupIdx)}>Remove group</button></div><div className="rewriteRules">{g.rules.map((r, ruleIdx) => <div className="rewriteRule" key={ruleIdx}><label><input type="checkbox" checked={r.enabled} onChange={e => patchRule(groupIdx, ruleIdx, { enabled: e.target.checked })} /> Rule enabled</label><label>From model<input value={r.fromModel} onChange={e => patchRule(groupIdx, ruleIdx, { fromModel: e.target.value })} placeholder="v1/cx/gpt-5.5" /></label><label>To model<input value={r.toModel} onChange={e => patchRule(groupIdx, ruleIdx, { toModel: e.target.value })} placeholder="cx/gpt-5.5" /></label><label>Note<input value={r.note ?? ''} onChange={e => patchRule(groupIdx, ruleIdx, { note: e.target.value })} placeholder="optional" /></label><button type="button" onClick={() => removeRule(groupIdx, ruleIdx)}>Remove</button></div>)}</div><button type="button" onClick={() => addRule(groupIdx)}>Add rule</button></div>)}</div><div className="actions"><button type="button" onClick={addGroup}>Add group</button><button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save rewrite config'}{dirty ? ' *' : ''}</button></div></section>;
+  const save = async () => {
+    const payload = groups.map(g => ({ ...g, rules: g.rules.map(r => {
+      const toModels = (r.toModels.length ? r.toModels : [r.toModel]).map(v => v.trim()).filter(Boolean);
+      return { ...r, toModels, toModel: toModels[0] ?? '', stickyCount: Math.max(1, Number(r.stickyCount) || 1) };
+    }) }));
+    await onSave({ enabled, groups: payload });
+    setDirty(false);
+  };
+  return <section className="attention"><h2>Cấu hình nâng cao — Model rewrite</h2><p>Soft OFF: tắt global là proxy không rewrite model. Khi bật, hệ thống duyệt group theo thứ tự, rule khớp đầu tiên sẽ đổi A → [B, C] theo sticky và failover.</p><label><input type="checkbox" checked={enabled} onChange={e => markEnabled(e.target.checked)} /> Enable model rewrite</label><div className="rewriteList">{groups.map((g, groupIdx) => <div className="rewriteGroup" key={groupIdx}><div className="rewriteGroupHead"><label><input type="checkbox" checked={g.enabled} onChange={e => patchGroup(groupIdx, { enabled: e.target.checked })} /> Group enabled</label><label>Group name<input value={g.name} onChange={e => patchGroup(groupIdx, { name: e.target.value })} placeholder="Group A" /></label><button type="button" onClick={() => removeGroup(groupIdx)}>Remove group</button></div><div className="rewriteRules">{g.rules.map((r, ruleIdx) => <div className="rewriteRule" key={ruleIdx}><label><input type="checkbox" checked={r.enabled} onChange={e => patchRule(groupIdx, ruleIdx, { enabled: e.target.checked })} /> Rule enabled</label><label>From model<input value={r.fromModel} onChange={e => patchRule(groupIdx, ruleIdx, { fromModel: e.target.value })} placeholder="cx/gpt-5.5" /></label><div className="rewriteTargets"><span>Target models</span>{r.toModels.map((target, targetIdx) => <div className="rewriteTarget" key={targetIdx}><input value={target} onChange={e => patchTarget(groupIdx, ruleIdx, targetIdx, e.target.value)} placeholder={`v${targetIdx + 1}/cx/gpt-5.5`} /><button type="button" onClick={() => removeTarget(groupIdx, ruleIdx, targetIdx)}>Remove target</button></div>)}<button type="button" onClick={() => addTarget(groupIdx, ruleIdx)}>Add target</button></div><label>Sticky<input type="number" min={1} value={r.stickyCount} onChange={e => patchRule(groupIdx, ruleIdx, { stickyCount: Math.max(1, Number(e.target.value) || 1) })} /></label><label>Note<input value={r.note ?? ''} onChange={e => patchRule(groupIdx, ruleIdx, { note: e.target.value })} placeholder="optional" /></label><button type="button" onClick={() => removeRule(groupIdx, ruleIdx)}>Remove rule</button></div>)}</div><button type="button" onClick={() => addRule(groupIdx)}>Add rule</button></div>)}</div><div className="actions"><button type="button" onClick={addGroup}>Add group</button><button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save rewrite config'}{dirty ? ' *' : ''}</button></div></section>;
 }
 
 function attention(k: KeyUsageSummary) {

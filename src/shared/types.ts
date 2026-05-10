@@ -114,6 +114,10 @@ export type ModelRewriteRule = {
   enabled: boolean;
   fromModel: string;
   toModel: string;
+  toModels: string[];
+  stickyCount: number;
+  stickyIndex?: number;
+  stickyUsed?: number;
   note?: string | null;
   createdAt?: string;
   updatedAt?: string;
