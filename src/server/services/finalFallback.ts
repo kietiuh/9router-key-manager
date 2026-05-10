@@ -1,9 +1,8 @@
 import Database from 'better-sqlite3';
+import { normalizeFinalFallbackConfig } from '../../shared/finalFallback.js';
+import type { FinalFallbackConfig } from '../../shared/types.js';
 
-export type FinalFallbackConfig = {
-  enabled: boolean;
-  model: string;
-};
+export type { FinalFallbackConfig } from '../../shared/types.js';
 
 const ENABLED_KEY = 'final_fallback_enabled';
 const MODEL_KEY = 'final_fallback_model';
@@ -25,10 +24,31 @@ export function getFinalFallbackConfig(db: Database.Database): FinalFallbackConf
 }
 
 export function saveFinalFallbackConfig(db: Database.Database, cfg: FinalFallbackConfig): FinalFallbackConfig {
-  const model = String(cfg.model ?? '').trim();
+  const next = normalizeFinalFallbackConfig(cfg);
   db.transaction(() => {
-    writeSetting(db, ENABLED_KEY, cfg.enabled ? 'true' : 'false');
-    writeSetting(db, MODEL_KEY, model);
+    writeSetting(db, ENABLED_KEY, next.enabled ? 'true' : 'false');
+    writeSetting(db, MODEL_KEY, next.model);
   })();
   return getFinalFallbackConfig(db);
+}
+
+export type FinalFallbackStore = {
+  get: () => FinalFallbackConfig;
+  save: (cfg: FinalFallbackConfig) => FinalFallbackConfig;
+  refresh: () => FinalFallbackConfig;
+};
+
+export function createFinalFallbackStore(db: Database.Database): FinalFallbackStore {
+  let cached = getFinalFallbackConfig(db);
+  return {
+    get: () => cached,
+    save: (cfg) => {
+      cached = saveFinalFallbackConfig(db, cfg);
+      return cached;
+    },
+    refresh: () => {
+      cached = getFinalFallbackConfig(db);
+      return cached;
+    },
+  };
 }

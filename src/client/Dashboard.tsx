@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { ConfigStatus, FinalFallbackConfig, KeyUsageSummary, ModelRewriteConfig } from '../shared/types';
+import { finalFallbackNeedsModel } from '../shared/finalFallback';
 import { api } from './api';
 import { fmt, fromVnInput, pct, vnDateTime } from './format';
 import { dict, filterLabel, recommendation, statusLabel, type Filter, type Lang } from './i18n';
@@ -79,11 +80,13 @@ function FinalFallbackPanel({ config, onSave, saving }: { config: FinalFallbackC
   const [model, setModel] = useState('');
   const [dirty, setDirty] = useState(false);
   useEffect(() => { if (dirty) return; setEnabled(Boolean(config?.enabled)); setModel(config?.model ?? ''); }, [config, dirty]);
+  const missingModel = finalFallbackNeedsModel({ enabled, model });
   const save = async () => {
+    if (missingModel) return;
     await onSave({ enabled, model: model.trim() });
     setDirty(false);
   };
-  return <section className="attention fallbackPanel"><h2>Cấu hình ngoài cùng — Final fallback</h2><div className="fallbackFields"><label><input type="checkbox" checked={enabled} onChange={e => { setDirty(true); setEnabled(e.target.checked); }} /> Enable final fallback</label><label>Fallback model<input value={model} onChange={e => { setDirty(true); setModel(e.target.value); }} placeholder="stable/model" /></label></div><div className="actions"><button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save final fallback'}{dirty ? ' *' : ''}</button></div></section>;
+  return <section className="attention fallbackPanel"><h2>Cấu hình ngoài cùng — Final fallback</h2><div className="fallbackFields"><label><input type="checkbox" checked={enabled} onChange={e => { setDirty(true); setEnabled(e.target.checked); }} /> Enable final fallback</label><label>Fallback model<input value={model} onChange={e => { setDirty(true); setModel(e.target.value); }} placeholder="stable/model" /></label></div>{missingModel && <p className="formError">Fallback model is required when enabled.</p>}<div className="actions"><button onClick={save} disabled={saving || missingModel}>{saving ? 'Saving...' : 'Save final fallback'}{dirty ? ' *' : ''}</button></div></section>;
 }
 
 function attention(k: KeyUsageSummary) {

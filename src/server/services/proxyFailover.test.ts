@@ -247,4 +247,24 @@ describe('fetchUpstreamWithFailover', () => {
     expect(result.upstream.status).toBe(200);
     result.lease.release();
   });
+
+  it('uses a generic retry log message for rewrite and final fallback retries', async () => {
+    const messages: string[] = [];
+    const limit = limiter();
+    const result = await fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/chat/completions',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1']),
+      finalFallback: { enabled: true, model: 'stable' },
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      trafficLimiter: limit.trafficLimiter,
+      log: (_data, message) => messages.push(message),
+      fetchImpl: async () => new Response('{}', { status: messages.length === 0 ? 500 : 200 }),
+    });
+
+    expect(messages).toEqual(['model failover retry']);
+    result.lease.release();
+  });
 });

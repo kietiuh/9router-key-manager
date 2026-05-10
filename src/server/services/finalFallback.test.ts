@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { migrate } from '../db/schema.js';
-import { getFinalFallbackConfig, saveFinalFallbackConfig } from './finalFallback.js';
+import { createFinalFallbackStore, getFinalFallbackConfig, saveFinalFallbackConfig } from './finalFallback.js';
 
 function memDb() {
   const db = new Database(':memory:');
@@ -27,5 +27,18 @@ describe('final fallback config', () => {
   it('keeps the fallback model while disabled', () => {
     const db = memDb();
     expect(saveFinalFallbackConfig(db, { enabled: false, model: 'stable/model' })).toEqual({ enabled: false, model: 'stable/model' });
+  });
+
+  it('caches reads and refreshes cache on save', () => {
+    const db = memDb();
+    saveFinalFallbackConfig(db, { enabled: true, model: 'stable/model' });
+    const store = createFinalFallbackStore(db);
+
+    expect(store.get()).toEqual({ enabled: true, model: 'stable/model' });
+
+    saveFinalFallbackConfig(db, { enabled: false, model: 'db-changed' });
+    expect(store.get()).toEqual({ enabled: true, model: 'stable/model' });
+    expect(store.save({ enabled: false, model: ' cache/model ' })).toEqual({ enabled: false, model: 'cache/model' });
+    expect(store.get()).toEqual({ enabled: false, model: 'cache/model' });
   });
 });

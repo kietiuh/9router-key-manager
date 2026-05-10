@@ -38,6 +38,7 @@ input[type=checkbox] { width:auto; margin-right:8px; vertical-align:middle; }
 .fallbackFields { display:grid; grid-template-columns: 180px minmax(260px, 1fr); gap:10px; align-items:end; max-width:720px; }
 .actions, .quick { display:flex; gap: 10px; margin: 12px 0 20px; flex-wrap:wrap; } .quick button { background:#123d2a; color:#55e39a; }
 .error { border: 1px solid #ef476f; color: #ff9aae; padding: 12px; border-radius: 12px; white-space: pre-wrap; background: #2a1018; }
+.formError { margin: 0; color: #ff9aae; }
 .audit { display: grid; gap: 8px; color: #bac6d8; }
 .login { min-height:100vh; display:grid; place-items:center; padding:20px; } .loginBox { width:min(420px, 100%); background:#121a2d; border:1px solid #26324b; border-radius:18px; padding:24px; box-shadow:0 20px 80px #0008; } .publicBox { width:min(620px, 100%); } .publicBox h3 { margin-top:16px; } .publicResult > p { margin:12px 0; } .publicModels { overflow:auto; border:1px solid #26324b; border-radius:12px; background:#0c1324; } .publicModels table { min-width:640px; } .publicModels th, .publicModels td { padding:10px 12px; } .publicModels tr { cursor:default; } .loginBox button { width:100%; margin-top:8px; } .loginErr { color:#ff7b91; margin:8px 0; }
 pre { overflow: auto; background: #0c1324; padding: 10px; border-radius: 10px; }
