@@ -15,6 +15,19 @@ describe('model rewrite config', () => {
     expect(getModelRewriteConfig(db)).toEqual({ enabled: false, groups: [], rules: [] });
   });
 
+  it('does not expose or create rewrite rule notes', () => {
+    const db = memDb();
+    const columns = (db.prepare('PRAGMA table_info(model_rewrite_rules)').all() as Array<{ name: string }>).map(c => c.name);
+    expect(columns).not.toContain('note');
+
+    const cfg = saveModelRewriteConfig(db, { enabled: true, groups: [
+      { name: 'Main', rules: [
+        { fromModel: 'A', toModel: 'B', note: 'unused' } as any,
+      ] },
+    ] });
+    expect(cfg.groups[0].rules[0]).not.toHaveProperty('note');
+  });
+
   it('rewrites only when globally enabled, group enabled, and rule enabled', () => {
     const db = memDb();
     const cfg = saveModelRewriteConfig(db, { enabled: true, groups: [
@@ -52,7 +65,7 @@ describe('model rewrite config', () => {
     const db = memDb();
     const cfg = saveModelRewriteConfig(db, { enabled: true, groups: [
       { name: '  Group A  ', rules: [
-        { fromModel: '  A  ', toModel: '  B  ', note: ' x ' },
+        { fromModel: '  A  ', toModel: '  B  ', note: ' x ' } as any,
         { fromModel: '', toModel: 'C' },
       ] },
     ] });
@@ -61,14 +74,14 @@ describe('model rewrite config', () => {
     expect(cfg.groups[0].rules).toHaveLength(1);
     expect(cfg.groups[0].rules[0].fromModel).toBe('A');
     expect(cfg.groups[0].rules[0].toModel).toBe('B');
-    expect(cfg.groups[0].rules[0].note).toBe('x');
+    expect(cfg.groups[0].rules[0]).not.toHaveProperty('note');
   });
 
   it('normalizes multiple targets and sticky count when saving groups', () => {
     const db = memDb();
     const cfg = saveModelRewriteConfig(db, { enabled: true, groups: [
       { name: '  Group A  ', rules: [
-        { fromModel: '  A  ', toModel: ' legacy ', toModels: [' v1 ', '', 'v2', 'v1'], stickyCount: 2, note: ' x ' },
+        { fromModel: '  A  ', toModel: ' legacy ', toModels: [' v1 ', '', 'v2', 'v1'], stickyCount: 2, note: ' x ' } as any,
       ] },
     ] });
     expect(cfg.groups[0].rules).toHaveLength(1);
@@ -79,8 +92,8 @@ describe('model rewrite config', () => {
       stickyCount: 2,
       stickyIndex: 0,
       stickyUsed: 0,
-      note: 'x',
     });
+    expect(cfg.groups[0].rules[0]).not.toHaveProperty('note');
   });
 
   it('falls back to legacy toModel when old rows do not have toModels JSON', () => {

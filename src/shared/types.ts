@@ -118,7 +118,6 @@ export type ModelRewriteRule = {
   stickyCount: number;
   stickyIndex?: number;
   stickyUsed?: number;
-  note?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
