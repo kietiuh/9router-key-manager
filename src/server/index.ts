@@ -21,6 +21,8 @@ import { applyRewritePlan, parseModelRewriteRequest } from './services/modelRewr
 import { createFinalFallbackStore } from './services/finalFallback.js';
 import { fetchUpstreamWithFailover, ProxyFailoverError, TrafficAcquireError } from './services/proxyFailover.js';
 import { TrafficLimiter, readTrafficLimitConfig, type TrafficLease } from './services/trafficLimiter.js';
+import { buildImageProxyUrl, getImageProxyConfig, isImageProxyPath, maybeRewriteImageModel, parseImageUsage, saveImageProxyConfig } from './services/imageProxy.js';
+import { imageProxyNeedsServerKey } from '../shared/imageProxy.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 3039);
@@ -52,6 +54,7 @@ const ModelRewriteRuleBody = z.object({ id: z.number().int().positive().optional
 const ModelRewriteGroupBody = z.object({ id: z.number().int().positive().optional(), name: z.string().optional(), enabled: z.boolean().optional(), rules: z.array(ModelRewriteRuleBody).optional() });
 const ModelRewriteConfigBody = z.object({ enabled: z.boolean(), groups: z.array(ModelRewriteGroupBody).optional(), rules: z.array(ModelRewriteRuleBody).optional() });
 const FinalFallbackConfigBody = z.object({ enabled: z.boolean(), model: z.string() });
+const ImageProxyConfigBody = z.object({ enabled: z.boolean(), upstreamBaseUrl: z.string(), authMode: z.enum(['pass-through', 'server-key']), modelOverride: z.string().optional() });
 
 function isAuthed(req: any) { return req.unsignCookie(req.cookies?.admin_session ?? '').valid; }
 async function requireAuth(req: any, reply: any) { if (!isAuthed(req)) return reply.code(401).send({ error: 'unauthorized' }); }
@@ -62,6 +65,7 @@ function refreshUsageStore() { ingestUsageHistory(db, readUsageHistory()); }
 function usageResponse() { const keys = ensurePolicies(); refreshUsageStore(); const usage = readStoredUsage(db); const policies = resolvedPolicies(); return summarizeKeyUsage(keys, usage, policies).sort((a, b) => { const rank = { danger: 0, expired: 1, warning: 2, unlimited: 3, ok: 4, inactive: 5 } as const; return rank[a.status] - rank[b.status] || (b.percentOfLimit ?? -1) - (a.percentOfLimit ?? -1); }); }
 function imageUsageSummary() { const today = new Date(Date.now()+7*60*60*1000).toISOString().slice(0,10); const rows = db.prepare('SELECT * FROM image_usage_events ORDER BY id DESC LIMIT 200').all() as any[]; const total = db.prepare('SELECT COALESCE(SUM(image_count),0) images, COALESCE(SUM(bytes),0) bytes, SUM(CASE WHEN status=\'success\' THEN 1 ELSE 0 END) success, SUM(CASE WHEN status!=\'success\' THEN 1 ELSE 0 END) errors FROM image_usage_events').get() as any; const todayImages = db.prepare("SELECT COALESCE(SUM(image_count),0) images FROM image_usage_events WHERE date(datetime(created_at, '+7 hours')) = ?").get(today) as any; return { todayImages: Number(todayImages.images||0), totalImages: Number(total.images||0), success: Number(total.success||0), errors: Number(total.errors||0), bytes: Number(total.bytes||0), events: rows }; }
 function recordImageUsage(body:any) { db.prepare(`INSERT INTO image_usage_events (kind, model, size, prompt_preview, prompt_hash, input_file, output_file, drive_path, status, error, image_count, bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(body.kind, body.model, body.size ?? null, body.promptPreview ?? null, body.promptHash ?? null, body.inputFile ?? null, body.outputFile ?? null, body.drivePath ?? null, body.status, body.error ?? null, body.imageCount ?? 1, body.bytes ?? null); return { ok: true }; }
+function recordImageProxyUsage(body:any) { try { recordImageUsage(body); } catch { /* usage logging must not break proxy */ } }
 function maskedUser(req: any) { const auth = String(req.headers?.authorization ?? ''); if (auth) return crypto.createHash('sha256').update(auth).digest('hex').slice(0, 12); return String(req.ip ?? 'unknown'); }
 function configStatus() { const nineRouterDir = default9routerDir(); const dbPath = dbJsonPath(nineRouterDir); const usagePath = usageJsonPath(nineRouterDir); const errors: string[] = []; const dbJsonExists = fs.existsSync(dbPath); const usageJsonExists = fs.existsSync(usagePath); const source = usageSourceStatus(nineRouterDir); if (!dbJsonExists) errors.push(`Missing 9router db.json at ${dbPath}`); if (!usageJsonExists) errors.push(`Missing 9router usage.json at ${usagePath}`); return { ok: errors.length === 0, nineRouterDir, dbJsonPath: dbPath, usageJsonPath: usagePath, dataSqlitePath: source.dataSqlitePath, usageSource: source.usageSource, dbJsonExists, usageJsonExists, dataSqliteExists: source.dataSqliteExists, managerDbPath: process.env.KEY_MANAGER_DB ?? '~/.local/state/9router-key-manager/manager.sqlite', hardDisable: process.env.HARD_DISABLE === 'true', timezone: VN_TZ_LABEL, errors }; }
 
@@ -97,11 +101,46 @@ app.register(async proxyRoutes => {
       else headers.set(key, String(value));
     }
 
+    const rawBody = method !== 'GET' && method !== 'HEAD'
+      ? (Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body == null ? '' : typeof req.body === 'string' ? req.body : JSON.stringify(req.body)))
+      : undefined;
+    const imageProxyConfig = getImageProxyConfig(db);
+    if (imageProxyConfig.enabled && isImageProxyPath(req.raw.url?.split('?')[0] ?? '') && method !== 'GET' && method !== 'HEAD') {
+      if (imageProxyNeedsServerKey(imageProxyConfig)) {
+        const serverKey = process.env.IMAGE_PROXY_API_KEY;
+        if (!serverKey) return reply.code(503).send({ error: { message: 'Image proxy server key is not configured', type: 'image_proxy_config' } });
+        headers.set('authorization', `Bearer ${serverKey}`);
+      }
+      const body = maybeRewriteImageModel(rawBody, req.headers['content-type'], imageProxyConfig.modelOverride);
+      if (body) headers.set('content-length', String(body.length));
+      else headers.delete('content-length');
+      const totalStarted = Date.now();
+      const upstreamStarted = Date.now();
+      try {
+        const upstream = await fetch(buildImageProxyUrl(imageProxyConfig, req.raw.url ?? '/v1/images/generations'), { method, headers, body: body as any, duplex: 'half' } as RequestInit & { duplex: 'half' });
+        const upstreamMs = Date.now() - upstreamStarted;
+        const responseBuffer = Buffer.from(await upstream.arrayBuffer());
+        const usage = parseImageUsage(body, responseBuffer.length, upstream.status);
+        recordImageProxyUsage(usage);
+        req.log.info({ upstreamBaseUrl: imageProxyConfig.upstreamBaseUrl, upstreamStatus: upstream.status, upstreamMs, totalMs: Date.now() - totalStarted, bodyBytes: body?.length ?? 0, responseBytes: responseBuffer.length }, 'image request proxied direct');
+        reply.header('x-image-proxy', 'direct');
+        reply.header('x-upstream-time-ms', String(upstreamMs));
+        reply.code(upstream.status);
+        upstream.headers.forEach((value, key) => {
+          if (!['connection', 'content-encoding', 'transfer-encoding', 'content-length'].includes(key.toLowerCase())) reply.header(key, value);
+        });
+        return reply.send(responseBuffer);
+      } catch (err: any) {
+        req.log.error({ error: err?.message, totalMs: Date.now() - totalStarted }, 'image direct proxy failed');
+        recordImageProxyUsage({ kind: 'proxy', model: imageProxyConfig.modelOverride || 'unknown', status: 'error', error: err?.message, imageCount: 1 });
+        return reply.code(502).send({ error: { message: 'Image upstream proxy error', type: 'image_proxy_error' } });
+      }
+    }
+
     let decision;
     let rewritePlan: RewriteTargetPlan | undefined;
     if (method !== 'GET' && method !== 'HEAD') {
-      const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body == null ? '' : typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
-      const parsed = parseModelRewriteRequest(raw, req.headers['content-type']);
+      const parsed = parseModelRewriteRequest(rawBody ?? Buffer.from(''), req.headers['content-type']);
       rewritePlan = parsed.model ? selectModelRewriteTargets(db, parsed.model) : undefined;
       decision = applyRewritePlan(parsed, rewritePlan);
       if (decision.rewritten) req.log.info({ fromModel: decision.fromModel, toModel: decision.toModel, targets: decision.targets }, 'model rewritten');
@@ -176,6 +215,8 @@ app.register(async protectedRoutes => {
   protectedRoutes.put('/api/model-rewrite/config', async (req) => saveModelRewriteConfig(db, ModelRewriteConfigBody.parse(req.body)));
   protectedRoutes.get('/api/final-fallback/config', async () => finalFallbackStore.get());
   protectedRoutes.put('/api/final-fallback/config', async (req) => finalFallbackStore.save(FinalFallbackConfigBody.parse(req.body)));
+  protectedRoutes.get('/api/image-proxy/config', async () => getImageProxyConfig(db));
+  protectedRoutes.put('/api/image-proxy/config', async (req) => saveImageProxyConfig(db, ImageProxyConfigBody.parse(req.body)));
   protectedRoutes.patch('/api/keys/:keyId/policy', async (req) => { const { keyId } = req.params as { keyId: string }; ensurePolicies(); const body = PolicyPatch.parse(req.body); const current = db.prepare('SELECT * FROM key_policies WHERE key_id = ?').get(keyId) as any; if (!current) { const err = new Error('key policy not found') as Error & { statusCode?: number }; err.statusCode = 404; throw err; } const currentMultiplier = Number(current.usage_multiplier ?? 1); const nextMultiplier = body.usageMultiplier === undefined ? currentMultiplier : body.usageMultiplier; const multiplierChanged = body.usageMultiplier !== undefined && nextMultiplier !== currentMultiplier; const effectiveAt = multiplierChanged ? new Date().toISOString() : current.usage_multiplier_effective_at; db.transaction(() => { db.prepare(`UPDATE key_policies SET token_limit = ?, window_start = ?, window_end = ?, expires_at = ?, reset_policy = ?, action_on_limit = ?, notes = ?, usage_multiplier = ?, usage_multiplier_effective_at = ?, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?`).run(body.tokenLimit === undefined ? current.token_limit : body.tokenLimit, body.windowStart ?? current.window_start, body.windowEnd === undefined ? current.window_end : body.windowEnd, body.expiresAt === undefined ? current.expires_at : body.expiresAt, body.resetPolicy ?? current.reset_policy, body.actionOnLimit ?? current.action_on_limit, body.notes === undefined ? current.notes : body.notes, nextMultiplier, effectiveAt, keyId); if (multiplierChanged) db.prepare('INSERT INTO usage_multiplier_events (key_id, multiplier, effective_at) VALUES (?, ?, ?)').run(keyId, nextMultiplier, effectiveAt); })(); db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'policy.update', JSON.stringify(body)); return usageResponse().find(x => x.keyId === keyId); });
   protectedRoutes.post('/api/keys/:keyId/reset-window', async (req, reply) => { const { keyId } = req.params as { keyId: string }; const current = db.prepare('SELECT reset_policy FROM key_policies WHERE key_id = ?').get(keyId) as any; if (!current) return reply.code(404).send({ error: 'key policy not found' }); if (current.reset_policy === 'daily' || current.reset_policy === 'monthly') return reply.code(409).send({ error: `reset-window is only available for manual/custom policies; ${current.reset_policy} windows reset automatically` }); const windowStart = new Date().toISOString(); db.prepare('UPDATE key_policies SET window_start = ?, window_end = NULL, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?').run(windowStart, keyId); db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'window.reset', windowStart); return usageResponse().find(x => x.keyId === keyId); });
   protectedRoutes.post('/api/watcher/run', async () => runWatcherOnce(db, { hardDisable: process.env.HARD_DISABLE === 'true' }));

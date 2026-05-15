@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { ConfigStatus, FinalFallbackConfig, KeyUsageSummary, ModelRewriteConfig } from '../shared/types';
+import type { ConfigStatus, FinalFallbackConfig, ImageProxyConfig, KeyUsageSummary, ModelRewriteConfig } from '../shared/types';
 import { finalFallbackNeedsModel } from '../shared/finalFallback';
+import { IMAGE_PROXY_ALLOWED_BASE_URLS } from '../shared/imageProxy';
 import { api } from './api';
 import { fmt, fromVnInput, pct, vnDateTime } from './format';
 import { dict, filterLabel, recommendation, statusLabel, type Filter, type Lang } from './i18n';
@@ -89,6 +90,20 @@ function FinalFallbackPanel({ config, onSave, saving }: { config: FinalFallbackC
   return <section className="attention fallbackPanel"><h2>Cấu hình ngoài cùng — Final fallback</h2><div className="fallbackFields"><label><input type="checkbox" checked={enabled} onChange={e => { setDirty(true); setEnabled(e.target.checked); }} /> Enable final fallback</label><label>Fallback model<input value={model} onChange={e => { setDirty(true); setModel(e.target.value); }} placeholder="stable/model" /></label></div>{missingModel && <p className="formError">Fallback model is required when enabled.</p>}<div className="actions"><button onClick={save} disabled={saving || missingModel}>{saving ? 'Saving...' : 'Save final fallback'}{dirty ? ' *' : ''}</button></div></section>;
 }
 
+function ImageProxyPanel({ config, onSave, saving }: { config: ImageProxyConfig | null; onSave: (cfg: ImageProxyConfig) => Promise<void>; saving: boolean }) {
+  const [enabled, setEnabled] = useState(false);
+  const [upstreamBaseUrl, setUpstreamBaseUrl] = useState('https://shopapikey.com/v1');
+  const [authMode, setAuthMode] = useState<ImageProxyConfig['authMode']>('pass-through');
+  const [modelOverride, setModelOverride] = useState('');
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => { if (dirty) return; setEnabled(Boolean(config?.enabled)); setUpstreamBaseUrl(config?.upstreamBaseUrl ?? 'https://shopapikey.com/v1'); setAuthMode(config?.authMode ?? 'pass-through'); setModelOverride(config?.modelOverride ?? ''); }, [config, dirty]);
+  const save = async () => {
+    await onSave({ enabled, upstreamBaseUrl, authMode, modelOverride: modelOverride.trim() });
+    setDirty(false);
+  };
+  return <section className="attention fallbackPanel"><h2>Image proxy routing</h2><p>Route /v1/images/generations and /v1/images/edits directly to selected image upstream. Chat/text requests stay on 9router.</p><div className="fallbackFields"><label><input type="checkbox" checked={enabled} onChange={e => { setDirty(true); setEnabled(e.target.checked); }} /> Enable image direct proxy</label><label>Upstream<select value={upstreamBaseUrl} onChange={e => { setDirty(true); setUpstreamBaseUrl(e.target.value); }}>{IMAGE_PROXY_ALLOWED_BASE_URLS.map(url => <option key={url} value={url}>{url}</option>)}</select></label><label>Auth mode<select value={authMode} onChange={e => { setDirty(true); setAuthMode(e.target.value as ImageProxyConfig['authMode']); }}><option value="pass-through">Pass through client Authorization</option><option value="server-key">Server key override (IMAGE_PROXY_API_KEY)</option></select></label><label>Model override (optional)<input value={modelOverride} onChange={e => { setDirty(true); setModelOverride(e.target.value); }} placeholder="cx/gpt-5.4-image" /></label></div><div className="actions"><button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save image proxy'}{dirty ? ' *' : ''}</button></div></section>;
+}
+
 function attention(k: KeyUsageSummary) {
   return ['danger', 'expired', 'warning', 'unlimited'].includes(k.status);
 }
@@ -99,6 +114,7 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
   const [audit, setAudit] = useState<Audit[]>([]);
   const [rewriteConfig, setRewriteConfig] = useState<ModelRewriteConfig | null>(null);
   const [finalFallbackConfig, setFinalFallbackConfig] = useState<FinalFallbackConfig | null>(null);
+  const [imageProxyConfig, setImageProxyConfig] = useState<ImageProxyConfig | null>(null);
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState('');
@@ -108,12 +124,13 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
   async function refresh() {
     try {
       setError('');
-      const [c, k, a, rw, ff] = await Promise.all([api<ConfigStatus>('/api/config/status'), api<KeyUsageSummary[]>('/api/keys/usage'), api<Audit[]>('/api/audit'), api<ModelRewriteConfig>('/api/model-rewrite/config'), api<FinalFallbackConfig>('/api/final-fallback/config')]);
+      const [c, k, a, rw, ff, ip] = await Promise.all([api<ConfigStatus>('/api/config/status'), api<KeyUsageSummary[]>('/api/keys/usage'), api<Audit[]>('/api/audit'), api<ModelRewriteConfig>('/api/model-rewrite/config'), api<FinalFallbackConfig>('/api/final-fallback/config'), api<ImageProxyConfig>('/api/image-proxy/config')]);
       setConfig(c);
       setKeys(k);
       setAudit(a);
       setRewriteConfig(rw);
       setFinalFallbackConfig(ff);
+      setImageProxyConfig(ip);
       if (selected) setSelected(k.find(x => x.keyId === selected.keyId) ?? null);
     } catch (e: any) {
       setError(e.message ?? String(e));
@@ -161,6 +178,16 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
     }
   }
 
+  async function saveImageProxyConfig(cfg: ImageProxyConfig) {
+    setSaving('image-proxy');
+    try {
+      const next = await api<ImageProxyConfig>('/api/image-proxy/config', { method: 'PUT', body: JSON.stringify(cfg) });
+      setImageProxyConfig(next);
+    } finally {
+      setSaving('');
+    }
+  }
+
   async function resetWindow(k: KeyUsageSummary) {
     if (k.resetPolicy === 'daily' || k.resetPolicy === 'monthly') { setError(t.automaticWindow); return; }
     if (!confirm(`Reset usage window for ${k.name}?`)) return;
@@ -173,5 +200,5 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
     onLogout();
   }
 
-  return <main><header><div><h1>{t.title}</h1><p>{t.subtitle}</p></div><div className="headActions"><select value={lang} onChange={e => setLang(e.target.value as Lang)}><option value="vi">VI</option><option value="en">EN</option></select><button onClick={refresh}>{t.refresh}</button><button type="button" onClick={logout}>{t.logout}</button></div></header>{error && <pre className="error">{error}</pre>}{config && !config.ok && <section className="setup"><h2>{t.setup}</h2>{config.errors.map(e => <p key={e}>{e}</p>)}</section>}<section className="cards"><div className="card primary"><span>{t.needs}</span><strong>{fmt(totals.attention)}</strong></div><div className="card"><span>{t.tokens}</span><strong>{fmt(totals.total)}</strong></div><div className="card"><span>{t.req}</span><strong>{fmt(totals.req)}</strong></div><div className="card"><span>{t.active}</span><strong>{fmt(totals.active)} / {fmt(keys.length)}</strong></div><div className="card"><span>{t.cost}</span><strong>${totals.cost.toFixed(4)}</strong></div><div className="card"><span>{t.auto}</span><strong>{config?.hardDisable ? 'ON' : 'DRY RUN'}</strong></div></section><section className="flow"><b>{t.flow}</b><span>{t.f1}</span><span>{t.f2}</span><span>{t.f3}</span><span>{t.f4}</span></section><section className="attention"><h2>{t.needs}</h2>{keys.filter(attention).length === 0 ? <p>{t.healthy}</p> : keys.filter(attention).map(k => <button className={`issue ${k.status}`} key={k.keyId} onClick={() => setSelected(k)}><b>{k.name}</b><span>{k.statusReason}</span><em>{recommendation(k.status, k.actionOnLimit, config?.hardDisable, lang)}</em></button>)}</section><section className="toolbar">{(['attention', 'all', 'danger', 'warning', 'unlimited', 'expired', 'inactive', 'ok'] as Filter[]).map(f => <button key={f} className={filter === f ? 'active' : ''} onClick={() => setFilter(f)}>{filterLabel(f, lang)}</button>)}</section><section className="tableWrap"><table><thead><tr><th>{t.status}</th><th>{t.name}</th><th>{t.usage}</th><th>{t.tokens}</th><th>{t.daily}</th><th>{t.window}</th><th>{t.action}</th><th>{t.last}</th></tr></thead><tbody>{visible.map(k => <tr key={k.keyId} onClick={() => setSelected(k)}><td><span className={`pill ${k.status}`}>{statusLabel(k.status, lang)}</span></td><td><b>{k.name}</b><br /><code>{k.keyMasked}</code></td><td><div className="meter"><div style={{ width: `${Math.min(k.percentOfLimit ?? 0, 100)}%` }} /></div>{pct(k.percentOfLimit)}</td><td>{fmt(k.total)}</td><td>{fmt(k.tokenLimit)}</td><td>{k.resetPolicy}</td><td>{k.actionOnLimit}</td><td>{vnDateTime(k.lastUsageAt)}</td></tr>)}</tbody></table></section><ModelRewritePanel config={rewriteConfig} onSave={saveRewriteConfig} saving={saving === 'model-rewrite'} /><FinalFallbackPanel config={finalFallbackConfig} onSave={saveFinalFallbackConfig} saving={saving === 'final-fallback'} />{selected && <KeyDrawer selected={selected} audit={audit} config={config} lang={lang} saving={saving} onClose={() => setSelected(null)} onQuickDaily={quickDaily} onSavePolicy={savePolicy} onResetWindow={resetWindow} />}</main>;
+  return <main><header><div><h1>{t.title}</h1><p>{t.subtitle}</p></div><div className="headActions"><select value={lang} onChange={e => setLang(e.target.value as Lang)}><option value="vi">VI</option><option value="en">EN</option></select><button onClick={refresh}>{t.refresh}</button><button type="button" onClick={logout}>{t.logout}</button></div></header>{error && <pre className="error">{error}</pre>}{config && !config.ok && <section className="setup"><h2>{t.setup}</h2>{config.errors.map(e => <p key={e}>{e}</p>)}</section>}<section className="cards"><div className="card primary"><span>{t.needs}</span><strong>{fmt(totals.attention)}</strong></div><div className="card"><span>{t.tokens}</span><strong>{fmt(totals.total)}</strong></div><div className="card"><span>{t.req}</span><strong>{fmt(totals.req)}</strong></div><div className="card"><span>{t.active}</span><strong>{fmt(totals.active)} / {fmt(keys.length)}</strong></div><div className="card"><span>{t.cost}</span><strong>${totals.cost.toFixed(4)}</strong></div><div className="card"><span>{t.auto}</span><strong>{config?.hardDisable ? 'ON' : 'DRY RUN'}</strong></div></section><section className="flow"><b>{t.flow}</b><span>{t.f1}</span><span>{t.f2}</span><span>{t.f3}</span><span>{t.f4}</span></section><section className="attention"><h2>{t.needs}</h2>{keys.filter(attention).length === 0 ? <p>{t.healthy}</p> : keys.filter(attention).map(k => <button className={`issue ${k.status}`} key={k.keyId} onClick={() => setSelected(k)}><b>{k.name}</b><span>{k.statusReason}</span><em>{recommendation(k.status, k.actionOnLimit, config?.hardDisable, lang)}</em></button>)}</section><section className="toolbar">{(['attention', 'all', 'danger', 'warning', 'unlimited', 'expired', 'inactive', 'ok'] as Filter[]).map(f => <button key={f} className={filter === f ? 'active' : ''} onClick={() => setFilter(f)}>{filterLabel(f, lang)}</button>)}</section><section className="tableWrap"><table><thead><tr><th>{t.status}</th><th>{t.name}</th><th>{t.usage}</th><th>{t.tokens}</th><th>{t.daily}</th><th>{t.window}</th><th>{t.action}</th><th>{t.last}</th></tr></thead><tbody>{visible.map(k => <tr key={k.keyId} onClick={() => setSelected(k)}><td><span className={`pill ${k.status}`}>{statusLabel(k.status, lang)}</span></td><td><b>{k.name}</b><br /><code>{k.keyMasked}</code></td><td><div className="meter"><div style={{ width: `${Math.min(k.percentOfLimit ?? 0, 100)}%` }} /></div>{pct(k.percentOfLimit)}</td><td>{fmt(k.total)}</td><td>{fmt(k.tokenLimit)}</td><td>{k.resetPolicy}</td><td>{k.actionOnLimit}</td><td>{vnDateTime(k.lastUsageAt)}</td></tr>)}</tbody></table></section><ModelRewritePanel config={rewriteConfig} onSave={saveRewriteConfig} saving={saving === 'model-rewrite'} /><FinalFallbackPanel config={finalFallbackConfig} onSave={saveFinalFallbackConfig} saving={saving === 'final-fallback'} /><ImageProxyPanel config={imageProxyConfig} onSave={saveImageProxyConfig} saving={saving === 'image-proxy'} />{selected && <KeyDrawer selected={selected} audit={audit} config={config} lang={lang} saving={saving} onClose={() => setSelected(null)} onQuickDaily={quickDaily} onSavePolicy={savePolicy} onResetWindow={resetWindow} />}</main>;
 }

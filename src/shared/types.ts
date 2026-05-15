@@ -141,3 +141,10 @@ export type FinalFallbackConfig = {
   enabled: boolean;
   model: string;
 };
+
+export type ImageProxyConfig = {
+  enabled: boolean;
+  upstreamBaseUrl: string;
+  authMode: 'pass-through' | 'server-key';
+  modelOverride?: string;
+};
