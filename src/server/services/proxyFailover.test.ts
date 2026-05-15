@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fetchUpstreamWithFailover, TrafficAcquireError } from './proxyFailover.js';
 import type { RewriteDecision } from './modelRewriteProxy.js';
 
@@ -88,9 +88,10 @@ describe('fetchUpstreamWithFailover', () => {
       },
     });
 
-    expect(calls).toEqual(['v1']);
-    expect(limit.acquired).toEqual(['v1']);
-    expect(result.model).toBe('v1');
+    expect(calls).toEqual(['v1', 'v2']);
+    expect(limit.acquired).toEqual(['v1', 'v2']);
+    expect(limit.released).toEqual(['v1']);
+    expect(result.model).toBe('v2');
     expect(result.upstream.status).toBe(401);
     result.lease.release();
   });
@@ -200,7 +201,7 @@ describe('fetchUpstreamWithFailover', () => {
     result.lease.release();
   });
 
-  it('does not use final fallback for non-retryable upstream statuses', async () => {
+  it('uses final fallback for upstream 401', async () => {
     const calls: string[] = [];
     const limit = limiter();
     const result = await fetchUpstreamWithFailover({
@@ -218,8 +219,8 @@ describe('fetchUpstreamWithFailover', () => {
       },
     });
 
-    expect(calls).toEqual(['v1']);
-    expect(result.model).toBe('v1');
+    expect(calls).toEqual(['v1', 'stable']);
+    expect(result.model).toBe('stable');
     expect(result.upstream.status).toBe(401);
     result.lease.release();
   });
@@ -267,4 +268,5 @@ describe('fetchUpstreamWithFailover', () => {
     expect(messages).toEqual(['model failover retry']);
     result.lease.release();
   });
+
 });
