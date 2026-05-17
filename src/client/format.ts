@@ -7,14 +7,20 @@ export const bytes = (n?: number | null) => {
   return `${Number((n / 1024).toFixed(1))} KB`;
 };
 
+const SQLITE_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
+function parseUtcTimestamp(value: string) {
+  return new Date(SQLITE_UTC_TIMESTAMP.test(value) ? `${value.replace(' ', 'T')}Z` : value);
+}
+
 export function vnDateTime(utc?: string | null) {
   if (!utc) return '—';
-  return new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(utc));
+  return new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(parseUtcTimestamp(utc));
 }
 
 export function toVnInput(utc?: string | null) {
   if (!utc) return '';
-  return new Date(new Date(utc).getTime() + 7 * 60 * 60 * 1000).toISOString().slice(0, 16);
+  return new Date(parseUtcTimestamp(utc).getTime() + 7 * 60 * 60 * 1000).toISOString().slice(0, 16);
 }
 
 export function fromVnInput(v: FormDataEntryValue | null) {
@@ -24,7 +30,7 @@ export function fromVnInput(v: FormDataEntryValue | null) {
 
 export function publicDateTime(utc?: string | null) {
   if (!utc) return '—';
-  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric', hour12: false }).formatToParts(new Date(utc));
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric', hour12: false }).formatToParts(parseUtcTimestamp(utc));
   const get = (type: string) => parts.find(p => p.type === type)?.value ?? '';
   return `${get('hour')}:${get('minute')} ${get('day')}/${get('month')}/${get('year')}`;
 }

@@ -8,6 +8,13 @@ button { background: #356cff; color: white; border: 0; border-radius: 10px; padd
 .card, .attention, .setup, .tableWrap { background: #121a2d; border: 1px solid #26324b; border-radius: 16px; padding: 16px; box-shadow: 0 10px 30px #0004; }
 .card span { color: #9aa7bd; display: block; } .card strong { font-size: 22px; } .card.primary { border-color:#356cff; background:#142248; }
 .setup { border-color: #ef476f; margin-bottom: 16px; }
+.adminShell { display:grid; gap:14px; }
+.adminTabs { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:2px; }
+.adminTabs button { display:flex; gap:8px; align-items:center; background:#172238; color:#bac6d8; border:1px solid #303d59; }
+.adminTabs button.active { background:#356cff; color:white; border-color:#6f92ff; }
+.adminTabs b { min-width:24px; padding:2px 7px; border-radius:999px; background:#0c1324; color:#e6edf7; font-size:12px; text-align:center; }
+.adminTabs button.active b { background:#15306c; }
+.adminTabPanel { min-width:0; }
 .flow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px; background:#0c1324; border:1px solid #26324b; border-radius:14px; padding:12px 14px; color:#bac6d8; } .flow b { color:#e6edf7; } .flow span { background:#172238; border:1px solid #303d59; padding:6px 10px; border-radius:999px; }
 .attention { margin-bottom: 14px; display: grid; gap: 10px; }
 .issue { display: grid; grid-template-columns: 1fr 2fr auto; gap: 12px; align-items: center; text-align: left; background: #0c1324; border: 1px solid #303d59; }

@@ -2,8 +2,7 @@ import React from 'react';
 import type { ConfigStatus, KeyUsageSummary } from '../shared/types';
 import { fmt, fromVnInput, pct, toVnInput, vnDateTime } from './format';
 import { dict, recommendation, statusLabel, type Lang } from './i18n';
-
-type Audit = { id: number; key_id?: string; action: string; message: string; created_at: string };
+import type { Audit } from './adminTypes';
 
 export function KeyDrawer({ selected, audit, config, lang, saving, onClose, onQuickDaily, onSavePolicy, onResetWindow }: { selected: KeyUsageSummary; audit: Audit[]; config: ConfigStatus | null; lang: Lang; saving: string; onClose: () => void; onQuickDaily: (k: KeyUsageSummary, limit: number) => void; onSavePolicy: (k: KeyUsageSummary, form: HTMLFormElement) => void; onResetWindow: (k: KeyUsageSummary) => void }) {
   const t = dict[lang];
