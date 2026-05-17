@@ -63,4 +63,23 @@ describe('atomic 9router key toggle', () => {
     const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
     expect(after.apiKeys.find((k: any) => k.id === 'b').isActive).toBe(true);
   });
+
+  it('reports unchanged when the key is already in the requested state', () => {
+    const dir = tmp9router({ sqlite: true });
+    const res = atomicEnableApiKey('a', dir, new Date('2026-01-01T00:00:00.000Z'));
+
+    expect(res.changed).toBe(false);
+    expect(res.results).toEqual([
+      expect.objectContaining({ storage: 'sqlite', found: true, changed: false, isActive: true }),
+      expect.objectContaining({ storage: 'json', found: true, changed: false, isActive: true }),
+    ]);
+  });
+
+  it('throws when the key or storage cannot be found', () => {
+    const dir = tmp9router();
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), '9rkm-empty-'));
+
+    expect(() => atomicDisableApiKey('missing', dir, new Date('2026-01-01T00:00:00.000Z'))).toThrow('API key not found');
+    expect(() => atomicDisableApiKey('a', emptyDir, new Date('2026-01-01T00:00:00.000Z'))).toThrow('No supported 9router storage found');
+  });
 });

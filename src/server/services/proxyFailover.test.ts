@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchUpstreamWithFailover, TrafficAcquireError } from './proxyFailover.js';
+import { fetchUpstreamWithFailover, isRetryableUpstreamStatus, ProxyFailoverError, TrafficAcquireError } from './proxyFailover.js';
 import type { RewriteDecision } from './modelRewriteProxy.js';
 
 function rewriteDecision(targets: string[]): RewriteDecision {
@@ -45,6 +45,35 @@ function limiter() {
 }
 
 describe('fetchUpstreamWithFailover', () => {
+  it('classifies retryable upstream statuses', () => {
+    expect(isRetryableUpstreamStatus(401)).toBe(true);
+    expect(isRetryableUpstreamStatus(429)).toBe(true);
+    expect(isRetryableUpstreamStatus(500)).toBe(true);
+    expect(isRetryableUpstreamStatus(400)).toBe(false);
+  });
+
+  it('can proxy requests without a rewrite decision', async () => {
+    const limit = limiter();
+    const result = await fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/models',
+      method: 'GET',
+      headers: new Headers({ 'content-length': '99' }),
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      trafficLimiter: limit.trafficLimiter,
+      fetchImpl: async (_url, init) => {
+        expect(init?.body).toBeUndefined();
+        expect((init?.headers as Headers).has('content-length')).toBe(false);
+        return new Response('{}', { status: 200 });
+      },
+    });
+
+    expect(limit.acquired).toEqual(['unknown']);
+    expect(result.model).toBe('unknown');
+    expect(result.bodyBytes).toBe(0);
+    result.lease.release();
+  });
+
   it('retries retryable upstream statuses with the next target model', async () => {
     const calls: string[] = [];
     const limit = limiter();
@@ -267,6 +296,35 @@ describe('fetchUpstreamWithFailover', () => {
 
     expect(messages).toEqual(['model failover retry']);
     result.lease.release();
+  });
+
+  it('maps final abort errors to upstream timeout', async () => {
+    const limit = limiter();
+    const abortError = new Error('aborted');
+    abortError.name = 'AbortError';
+
+    await expect(fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/chat/completions',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1']),
+      userId: 'user-1',
+      largeContextThresholdTokens: 1,
+      trafficLimiter: limit.trafficLimiter,
+      fetchImpl: async () => { throw abortError; },
+    })).rejects.toMatchObject({ statusCode: 504, type: 'upstream_timeout', model: 'v1' });
+
+    await expect(fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/chat/completions',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1']),
+      userId: 'user-1',
+      largeContextThresholdTokens: 1,
+      trafficLimiter: limit.trafficLimiter,
+      fetchImpl: async () => { throw abortError; },
+    })).rejects.toBeInstanceOf(ProxyFailoverError);
+    expect(limit.released).toEqual(['v1', 'v1']);
   });
 
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { KeyUsageSummary } from '../shared/types';
-import { ADMIN_FILTERS, getAdminTabCounts, isKeyAttention } from './adminTabs';
+import { ADMIN_FILTERS, adminTabLabel, getAdminTabCounts, isKeyAttention } from './adminTabs';
 
 function key(status: KeyUsageSummary['status'], isActive = true): KeyUsageSummary {
   return {
@@ -46,6 +46,15 @@ describe('admin tab helpers', () => {
     expect(counts.keys).toBe(3);
     expect(counts.images).toBe(2);
     expect(counts.routing).toBeUndefined();
+  });
+
+  it('uses zero image count when image usage has not loaded', () => {
+    expect(getAdminTabCounts([key('warning')], null)).toEqual({ overview: 1, keys: 1, images: 0 });
+  });
+
+  it('returns localized tab labels', () => {
+    expect(adminTabLabel('overview', 'en')).toBe('Overview');
+    expect(adminTabLabel('images', 'vi')).toBe('Ảnh');
   });
 
   it('keeps key filters in their display order', () => {

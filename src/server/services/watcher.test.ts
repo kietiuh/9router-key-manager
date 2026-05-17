@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { migrate } from '../db/schema.js';
-import { runWatcherOnce } from './watcher.js';
+import { runWatcherOnce, startWatcher } from './watcher.js';
 
 function fixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), '9rkm-watch-'));
@@ -24,6 +24,15 @@ describe('runWatcherOnce', () => {
     const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
     expect(after.apiKeys[0].isActive).toBe(false);
     expect(db.prepare('SELECT COUNT(*) as n FROM audit_log').get()).toMatchObject({ n: 1 });
+  });
+
+  it('can emit a disable action without mutating storage when hard disable is off', () => {
+    const { dir, db } = fixture();
+    const out = runWatcherOnce(db, { baseDir: dir });
+    const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
+
+    expect(out.actions).toMatchObject([{ action: 'disable', keyId: 'a' }]);
+    expect(after.apiKeys[0].isActive).toBe(true);
   });
 
   it('auto-enables daily quota lockouts when a new day window starts', () => {
@@ -51,5 +60,18 @@ describe('runWatcherOnce', () => {
     expect(out.events).toHaveLength(1);
     const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
     expect(after.apiKeys[0].isActive).toBe(false);
+  });
+
+  it('logs watcher tick errors instead of throwing out of the interval loop', () => {
+    const db = new Database(':memory:');
+    migrate(db);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const handle = startWatcher(db, 60_000, { baseDir: path.join(os.tmpdir(), 'missing-9router-dir') });
+
+    clearInterval(handle);
+
+    expect(spy).toHaveBeenCalledWith('[watcher]', expect.any(Error));
+    spy.mockRestore();
+    db.close();
   });
 });
