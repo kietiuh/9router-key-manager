@@ -8,6 +8,8 @@ export type Policy = {
   window_end?: string | null;
   reset_policy?: 'manual' | 'daily' | 'monthly' | 'custom' | null;
   token_limit?: number | null;
+  image_daily_limit?: number | null;
+  image_daily_used?: number | null;
   expires_at?: string | null;
   action_on_limit?: 'alert' | 'disable' | 'none' | null;
   usage_multiplier?: number | null;
@@ -127,6 +129,8 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
       resetPolicy: p?.reset_policy ?? 'manual',
       expiresAt: p?.expires_at ?? null,
       tokenLimit: limit,
+      imageDailyLimit: p?.image_daily_limit ?? null,
+      imageDailyUsed: Number(p?.image_daily_used ?? 0),
       actionOnLimit: p?.action_on_limit ?? 'alert',
       usageMultiplier: multiplier,
       usageMultiplierEffectiveAt: multiplierEffectiveAt,
