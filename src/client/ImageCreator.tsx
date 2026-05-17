@@ -8,6 +8,7 @@ type GenerateResponse = ImageFileResponse & { revisedPrompt?: string; prompt: st
 type HistoryItem = { id: number; model: string; size?: string; promptPreview?: string; bytes?: number; estimatedTotalTokens?: number; createdAt: string; expiresAt?: string };
 type HistoryResponse = { images: HistoryItem[] };
 type HistoryPreview = ImageFileResponse & { id: number };
+type ImageJobStatus = { jobId: string; status: 'queued' | 'running' | 'success' | 'error' | 'cancelled'; queuePosition?: number | null; error?: string; result?: GenerateResponse };
 
 const imageKeyStorage = 'gocinema:imageKey';
 const busyOptimize = 'optimize';
@@ -48,6 +49,7 @@ export function ImageCreator() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [previewingId, setPreviewingId] = useState<number | null>(null);
   const [historyPreview, setHistoryPreview] = useState<HistoryPreview | null>(null);
+  const [job, setJob] = useState<ImageJobStatus | null>(null);
 
   const activePrompt = useMemo(() => (optimizedPrompt || prompt).trim(), [optimizedPrompt, prompt]);
 
@@ -65,20 +67,44 @@ export function ImageCreator() {
     } finally { setBusy(''); }
   }
 
+  async function pollJob(jobId: string) {
+    let done = false;
+    while (!done) {
+      await new Promise(r => setTimeout(r, 1500));
+      const status = await api<ImageJobStatus>('/api/public/images/jobs/status', { method: 'POST', body: JSON.stringify({ key: key.trim(), jobId }) });
+      setJob(status);
+      if (status.status === 'success' && status.result) {
+        setResult(status.result); done = true; void loadHistory();
+      } else if (status.status === 'error' || status.status === 'cancelled') {
+        if (status.status === 'error') setError(friendlyImageError(status.error || 'Generate failed'));
+        done = true;
+      }
+    }
+  }
+
   async function generate() {
-    setError(''); setResult(null); setBusy(busyGenerate);
+    setError(''); setResult(null); setBusy(busyGenerate); setJob(null);
     try {
       if (rememberKey) localStorage.setItem(imageKeyStorage, key.trim());
       else localStorage.removeItem(imageKeyStorage);
-      const res = await api<GenerateResponse>('/api/public/images/generate', {
+      const created = await api<ImageJobStatus>('/api/public/images/jobs', {
         method: 'POST',
         body: JSON.stringify({ key: key.trim(), prompt: activePrompt, size }),
       });
-      setResult(res);
-      void loadHistory();
+      setJob(created);
+      await pollJob(created.jobId);
     } catch (e: any) {
       setError(friendlyImageError(e?.message || 'Generate failed'));
     } finally { setBusy(''); }
+  }
+
+  async function cancelJob() {
+    if (!job || job.status !== 'queued') return;
+    setError('');
+    try {
+      const res = await api<ImageJobStatus>('/api/public/images/jobs/cancel', { method: 'POST', body: JSON.stringify({ key: key.trim(), jobId: job.jobId }) });
+      setJob(res); setBusy('');
+    } catch (e: any) { setError(friendlyImageError(e?.message || 'Cancel failed')); }
   }
 
   async function loadHistory() {
@@ -167,7 +193,7 @@ export function ImageCreator() {
           <button type="button" onClick={generate} disabled={!!busy || !key.trim() || !activePrompt}>{busy === busyGenerate ? 'Đang tạo ảnh...' : 'Tạo ảnh'}</button>
           <button type="button" onClick={loadHistory} disabled={!!busy || historyLoading || !key.trim()}>{historyLoading ? 'Đang tải...' : 'Ảnh 24h'}</button>
         </div>
-        {busy === busyGenerate && <p className="hintText">Ảnh thường mất 60-120 giây tùy upstream. Giữ trang này mở trong lúc xử lý.</p>}
+        {busy === busyGenerate && <p className="hintText">{job?.status === 'queued' ? `Bạn đang ở hàng đợi #${job.queuePosition ?? '?'}.` : 'Ảnh thường mất 60-120 giây tùy upstream. Giữ trang này mở trong lúc xử lý.'} {job?.status === 'queued' && <button type="button" onClick={cancelJob}>Hủy</button>}</p>}
         {error && <pre className="error">{error}</pre>}
       </div>
 
@@ -186,8 +212,9 @@ export function ImageCreator() {
         </div> : <div className={`emptyPreview ${busy === busyGenerate ? 'generating' : ''}`}>
           {busy === busyGenerate ? <div className="generatingPreview" role="status" aria-live="polite">
             <div className="imageLoadingFrame"><span /></div>
-            <b>Đang tạo ảnh...</b>
-            <p>Ảnh sẽ hiện ở đây ngay khi hoàn tất.</p>
+            <b>{job?.status === 'queued' ? `Đang chờ hàng đợi #${job.queuePosition ?? '?'}` : 'Đang tạo ảnh...'}</b>
+            <p>{job?.status === 'queued' ? 'Bạn có thể hủy trước khi ảnh bắt đầu tạo.' : 'Ảnh sẽ hiện ở đây ngay khi hoàn tất.'}</p>
+            {job?.status === 'queued' && <button type="button" onClick={cancelJob}>Hủy tạo ảnh</button>}
           </div> : 'Ảnh sẽ hiện ở đây sau khi tạo.'}
         </div>}
       </div>
