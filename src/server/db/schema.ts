@@ -9,6 +9,7 @@ export function migrate(db: Database.Database): void {
       window_start TEXT NOT NULL,
       window_end TEXT,
       token_limit INTEGER,
+      image_daily_limit INTEGER,
       reset_policy TEXT NOT NULL DEFAULT 'manual',
       expires_at TEXT,
       action_on_limit TEXT NOT NULL DEFAULT 'alert',
@@ -120,6 +121,7 @@ export function migrate(db: Database.Database): void {
   `);
   const cols = db.prepare("PRAGMA table_info(key_policies)").all() as Array<{ name: string }>;
   const names = new Set(cols.map(c => c.name));
+  if (!names.has('image_daily_limit')) db.exec('ALTER TABLE key_policies ADD COLUMN image_daily_limit INTEGER');
   if (!names.has('usage_multiplier')) db.exec('ALTER TABLE key_policies ADD COLUMN usage_multiplier REAL NOT NULL DEFAULT 1.0');
   if (!names.has('usage_multiplier_effective_at')) db.exec('ALTER TABLE key_policies ADD COLUMN usage_multiplier_effective_at TEXT');
   const imageCols = db.prepare("PRAGMA table_info(image_usage_events)").all() as Array<{ name: string }>;

@@ -44,6 +44,8 @@ export type KeyUsageSummary = {
   resetPolicy: 'manual' | 'daily' | 'monthly' | 'custom';
   expiresAt?: string | null;
   tokenLimit?: number | null;
+  imageDailyLimit?: number | null;
+  imageDailyUsed?: number;
   actionOnLimit: 'alert' | 'disable' | 'none';
   usageMultiplier: number;
   usageMultiplierEffectiveAt?: string | null;
