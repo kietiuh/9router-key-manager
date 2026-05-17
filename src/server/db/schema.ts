@@ -86,6 +86,7 @@ export function migrate(db: Database.Database): void {
       estimated_completion_tokens INTEGER,
       estimated_total_tokens INTEGER,
       usage_event_signature TEXT,
+      expires_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS app_settings (
@@ -129,6 +130,7 @@ export function migrate(db: Database.Database): void {
   if (!imageNames.has('estimated_completion_tokens')) db.exec('ALTER TABLE image_usage_events ADD COLUMN estimated_completion_tokens INTEGER');
   if (!imageNames.has('estimated_total_tokens')) db.exec('ALTER TABLE image_usage_events ADD COLUMN estimated_total_tokens INTEGER');
   if (!imageNames.has('usage_event_signature')) db.exec('ALTER TABLE image_usage_events ADD COLUMN usage_event_signature TEXT');
+  if (!imageNames.has('expires_at')) db.exec('ALTER TABLE image_usage_events ADD COLUMN expires_at TEXT');
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_image_usage_events_key_time ON image_usage_events (key_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_image_usage_events_signature ON image_usage_events (usage_event_signature);

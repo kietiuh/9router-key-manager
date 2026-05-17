@@ -3,7 +3,9 @@ import { api } from './api';
 import { bytes as fmtBytes } from './format';
 
 type OptimizeResponse = { prompt: string; source: 'optimized' | 'fallback' };
-type GenerateResponse = { image: string; mimeType: string; filename: string; revisedPrompt?: string; prompt: string; bytes: number };
+type GenerateResponse = { image: string; mimeType: string; filename: string; revisedPrompt?: string; prompt: string; bytes: number; expiresAt?: string };
+type HistoryItem = { id: number; model: string; size?: string; promptPreview?: string; bytes?: number; estimatedTotalTokens?: number; createdAt: string; expiresAt?: string };
+type HistoryResponse = { images: HistoryItem[] };
 
 const samplePrompt = 'A cinematic Vietnamese dragon made of golden light flying above Ha Long Bay at sunrise, ultra detailed, magical atmosphere';
 const imageErrorLabels: Record<string, string> = {
@@ -36,6 +38,8 @@ export function ImageCreator() {
   const [busy, setBusy] = useState<'optimize' | 'generate' | ''>('');
   const [error, setError] = useState('');
   const [result, setResult] = useState<GenerateResponse | null>(null);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   const activePrompt = useMemo(() => (optimizedPrompt || prompt).trim(), [optimizedPrompt, prompt]);
 
@@ -63,9 +67,30 @@ export function ImageCreator() {
         body: JSON.stringify({ key: key.trim(), prompt: activePrompt, size }),
       });
       setResult(res);
+      void loadHistory();
     } catch (e: any) {
       setError(friendlyImageError(e?.message || 'Generate failed'));
     } finally { setBusy(''); }
+  }
+
+  async function loadHistory() {
+    setError(''); setBusy('optimize');
+    try {
+      const res = await api<HistoryResponse>('/api/public/images/history', { method: 'POST', body: JSON.stringify({ key: key.trim() }) });
+      setHistory(res.images); setHistoryLoaded(true);
+    } catch (e: any) { setError(friendlyImageError(e?.message || 'Load history failed')); }
+    finally { setBusy(''); }
+  }
+
+  async function downloadHistory(id: number) {
+    setError('');
+    try {
+      const res = await api<GenerateResponse>('/api/public/images/download', { method: 'POST', body: JSON.stringify({ key: key.trim(), id }) });
+      const a = document.createElement('a');
+      a.href = `data:${res.mimeType};base64,${res.image}`;
+      a.download = res.filename || `gocinema-image-${id}.png`;
+      a.click();
+    } catch (e: any) { setError(friendlyImageError(e?.message || 'Download failed')); }
   }
 
   function download() {
@@ -114,6 +139,7 @@ export function ImageCreator() {
         <div className="actions imageActions">
           <button type="button" onClick={optimize} disabled={!!busy || !key.trim() || !prompt.trim()}>{busy === 'optimize' ? 'Đang tối ưu...' : 'Tối ưu prompt'}</button>
           <button type="button" onClick={generate} disabled={!!busy || !key.trim() || !activePrompt}>{busy === 'generate' ? 'Đang tạo ảnh...' : 'Tạo ảnh'}</button>
+          <button type="button" onClick={loadHistory} disabled={!!busy || !key.trim()}>{busy === 'optimize' && historyLoaded ? 'Đang tải...' : 'Ảnh 24h'}</button>
         </div>
         {busy === 'generate' && <p className="hintText">Ảnh thường mất 60-120 giây tùy upstream. Giữ trang này mở trong lúc xử lý.</p>}
         {error && <pre className="error">{error}</pre>}
@@ -127,12 +153,24 @@ export function ImageCreator() {
           <img src={`data:${result.mimeType};base64,${result.image}`} alt="Generated" />
           <div className="imageActions">
             <button type="button" onClick={download}>Download ảnh</button>
-            <span>{fmtBytes(result.bytes)}</span>
+            <span>{fmtBytes(result.bytes)}{result.expiresAt ? ` · lưu đến ${new Date(result.expiresAt).toLocaleString()}` : ''}</span>
           </div>
           <details><summary>Prompt đã gửi upstream</summary><p>{result.prompt}</p></details>
           {result.revisedPrompt && <details><summary>Revised prompt</summary><p>{result.revisedPrompt}</p></details>}
         </div> : <div className="emptyPreview">Ảnh sẽ hiện ở đây sau khi tạo.</div>}
       </div>
+    </section>
+
+    <section className="imagePanel historyPanel">
+      <div className="historyHead"><h2>Ảnh đã tạo trong 24 giờ</h2><button type="button" onClick={loadHistory} disabled={!!busy || !key.trim()}>Refresh</button></div>
+      {!historyLoaded && <p>Nhập key rồi bấm “Ảnh 24h” để xem ảnh đã tạo bằng key này.</p>}
+      {historyLoaded && history.length === 0 && <div className="emptyPreview small">Chưa có ảnh còn hạn 24h.</div>}
+      <div className="historyGrid">{history.map(img => <article key={img.id} className="historyItem">
+        <div><b>#{img.id}</b><span>{img.model} · {img.size}</span><p>{img.promptPreview}</p></div>
+        <span>{img.bytes ? fmtBytes(img.bytes) : ''}{img.estimatedTotalTokens ? ` · ${img.estimatedTotalTokens.toLocaleString()} token` : ''}</span>
+        <span>Hết hạn: {img.expiresAt ? new Date(img.expiresAt).toLocaleString() : '24h'}</span>
+        <button type="button" onClick={() => downloadHistory(img.id)}>Download</button>
+      </article>)}</div>
     </section>
   </main>;
 }

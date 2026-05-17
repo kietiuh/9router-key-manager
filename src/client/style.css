@@ -67,3 +67,9 @@ pre { overflow: auto; background: #0c1324; padding: 10px; border-radius: 10px; }
 	.imageEvents { display:grid; gap:8px; } .imageEvent { display:grid; grid-template-columns: minmax(160px, .8fr) 1fr auto; gap:12px; align-items:center; background:#0c1324; border:1px solid #303d59; border-radius:12px; padding:10px; } .imageEvent div { display:grid; gap:2px; } .imageEvent span, .imageEvent em { color:#9aa7bd; font-style:normal; font-size:12px; } .imageEvent p { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .imageEvent.error { border-color:#4a1b24; }
 	@media (max-width: 1100px) { .cards { grid-template-columns: repeat(3, 1fr); } .imageGrid { grid-template-columns:1fr; } }
 	@media (max-width: 720px) { main { padding: 14px; } header { align-items: flex-start; flex-direction: column; } .cards { grid-template-columns: repeat(2, 1fr); } .issue, .rewriteGroupHead, .rewriteRule, .rewriteTarget, .fallbackFields, .imageUsageStats, .imageEvent { grid-template-columns: 1fr; } .keyOptions { align-items:flex-start; flex-direction:column; } }
+.historyPanel { margin-top:16px; }
+.historyHead { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:10px; }
+.historyGrid { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:12px; }
+.historyItem { display:grid; gap:8px; background:#0c1324; border:1px solid #303d59; border-radius:14px; padding:12px; }
+.historyItem b { color:#e6edf7; } .historyItem span { color:#9aa7bd; font-size:12px; } .historyItem p { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.emptyPreview.small { min-height:120px; }
