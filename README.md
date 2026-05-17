@@ -50,6 +50,44 @@ Important variables:
 - `HARD_DISABLE`: set to `true` only when you want quota breaches with action `disable` to modify 9router `db.json`.
 - `CORS_ORIGINS`: comma-separated allowed UI origins; defaults to local Vite origins.
 - `COOKIE_SECURE`: override secure-cookie behavior; defaults to secure in production only.
+- `NINE_ROUTER_UPSTREAM`: 9router API base URL; production uses `http://127.0.0.1:20128`.
+- `IMAGE_PROXY_API_KEY`: server-side image upstream key for `authMode: server-key`; never expose or commit it.
+
+## Public image creator
+
+A public user-facing image page exists at:
+
+```text
+/images
+/image
+```
+
+Users paste an active GoCinema key, enter a prompt, optionally optimize it, generate an image, preview it, then download the PNG. The page is public, but API calls require a valid active GoCinema key.
+
+Relevant APIs:
+
+- `POST /api/public/images/optimize-prompt`
+- `POST /api/public/images/generate`
+- `POST /v1/images/generations` remains the direct OpenAI-compatible image proxy.
+
+Production currently serves this at:
+
+```text
+https://admin.gocinema.io.vn/images
+```
+
+Production image proxy expectations:
+
+```json
+{
+  "enabled": true,
+  "upstreamBaseUrl": "https://shopapikey.com/v1",
+  "authMode": "server-key",
+  "modelOverride": "cx/gpt-5.4-image"
+}
+```
+
+Implementation/deploy docs: [`docs/public-image-creator.md`](docs/public-image-creator.md).
 
 ## Concepts
 
@@ -72,6 +110,9 @@ When enabled, the watcher can set the target key's `isActive=false` inside 9rout
 ## Current endpoints
 
 - `GET /api/health`
+- `POST /api/public/key-check`
+- `POST /api/public/images/optimize-prompt`
+- `POST /api/public/images/generate`
 - `GET /api/keys/usage`
 - `PATCH /api/keys/:keyId/policy`
 - `POST /api/keys/:keyId/reset-window`
