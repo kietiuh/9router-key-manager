@@ -1,117 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ConfigStatus, FinalFallbackConfig, ImageProxyConfig, ImageUsageSummary, KeyUsageSummary, ModelRewriteConfig } from '../shared/types';
-import { finalFallbackNeedsModel } from '../shared/finalFallback';
-import { IMAGE_PROXY_ALLOWED_BASE_URLS } from '../shared/imageProxy';
 import { api } from './api';
-import { bytes as fmtBytes, fmt, fromVnInput, pct, vnDateTime } from './format';
-import { dict, filterLabel, recommendation, statusLabel, type Filter, type Lang } from './i18n';
+import { fromVnInput } from './format';
+import { dict, type Filter, type Lang } from './i18n';
 import { KeyDrawer } from './KeyDrawer';
-
-type Audit = { id: number; key_id?: string; action: string; message: string; created_at: string };
-
-type RewriteDraftRule = { id?: number; groupId?: number | null; enabled: boolean; fromModel: string; toModel: string; toModels: string[]; stickyCount: number };
-type RewriteDraftGroup = { id?: number; name: string; enabled: boolean; rules: RewriteDraftRule[] };
-
-function draftRule(r: ModelRewriteConfig['groups'][number]['rules'][number]): RewriteDraftRule {
-  const targets = r.toModels?.length ? r.toModels : (r.toModel ? [r.toModel] : ['']);
-  return { id: r.id, groupId: r.groupId, enabled: r.enabled, fromModel: r.fromModel, toModel: targets[0] ?? '', toModels: targets, stickyCount: Math.max(1, Number(r.stickyCount ?? 1)) };
-}
-
-function draftGroups(config: ModelRewriteConfig | null): RewriteDraftGroup[] {
-  if (config?.groups?.length) return config.groups.map(g => ({ id: g.id, name: g.name, enabled: g.enabled, rules: g.rules.map(draftRule) }));
-  if (config?.rules?.length) return [{ name: 'Default', enabled: true, rules: config.rules.map(draftRule) }];
-  return [];
-}
-
-function ModelRewritePanel({ config, onSave, saving }: { config: ModelRewriteConfig | null; onSave: (cfg: { enabled: boolean; groups: RewriteDraftGroup[] }) => Promise<void>; saving: boolean }) {
-  const [enabled, setEnabled] = useState(false);
-  const [groups, setGroups] = useState<RewriteDraftGroup[]>([]);
-  const [dirty, setDirty] = useState(false);
-  useEffect(() => { if (dirty) return; setEnabled(Boolean(config?.enabled)); setGroups(draftGroups(config)); }, [config, dirty]);
-  const markEnabled = (v: boolean) => { setDirty(true); setEnabled(v); };
-  const addGroup = () => { setDirty(true); setGroups([...groups, { name: `Group ${groups.length + 1}`, enabled: true, rules: [] }]); };
-  const patchGroup = (idx: number, patch: Partial<RewriteDraftGroup>) => { setDirty(true); setGroups(groups.map((g, i) => i === idx ? { ...g, ...patch } : g)); };
-  const removeGroup = (idx: number) => { setDirty(true); setGroups(groups.filter((_, i) => i !== idx)); };
-  const addRule = (groupIdx: number) => {
-    setDirty(true);
-    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: [...g.rules, { enabled: true, fromModel: '', toModel: '', toModels: [''], stickyCount: 1 }] } : g));
-  };
-  const patchRule = (groupIdx: number, ruleIdx: number, patch: Partial<RewriteDraftRule>) => {
-    setDirty(true);
-    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => j === ruleIdx ? { ...r, ...patch } : r) } : g));
-  };
-  const patchTarget = (groupIdx: number, ruleIdx: number, targetIdx: number, value: string) => {
-    setDirty(true);
-    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => {
-      if (j !== ruleIdx) return r;
-      const toModels = r.toModels.map((target, k) => k === targetIdx ? value : target);
-      return { ...r, toModels, toModel: toModels[0] ?? '' };
-    }) } : g));
-  };
-  const addTarget = (groupIdx: number, ruleIdx: number) => {
-    setDirty(true);
-    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => j === ruleIdx ? { ...r, toModels: [...r.toModels, ''] } : r) } : g));
-  };
-  const removeTarget = (groupIdx: number, ruleIdx: number, targetIdx: number) => {
-    setDirty(true);
-    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => {
-      if (j !== ruleIdx) return r;
-      const toModels = r.toModels.filter((_, k) => k !== targetIdx);
-      const next = toModels.length ? toModels : [''];
-      return { ...r, toModels: next, toModel: next[0] ?? '' };
-    }) } : g));
-  };
-  const removeRule = (groupIdx: number, ruleIdx: number) => {
-    setDirty(true);
-    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.filter((_, j) => j !== ruleIdx) } : g));
-  };
-  const save = async () => {
-    const payload = groups.map(g => ({ ...g, rules: g.rules.map(r => {
-      const toModels = (r.toModels.length ? r.toModels : [r.toModel]).map(v => v.trim()).filter(Boolean);
-      return { ...r, toModels, toModel: toModels[0] ?? '', stickyCount: Math.max(1, Number(r.stickyCount) || 1) };
-    }) }));
-    await onSave({ enabled, groups: payload });
-    setDirty(false);
-  };
-  return <section className="attention"><h2>Cấu hình nâng cao — Model rewrite</h2><p>Soft OFF: tắt global là proxy không rewrite model. Khi bật, hệ thống duyệt group theo thứ tự, rule khớp đầu tiên sẽ đổi A → [B, C] theo sticky và failover.</p><label><input type="checkbox" checked={enabled} onChange={e => markEnabled(e.target.checked)} /> Enable model rewrite</label><div className="rewriteList">{groups.map((g, groupIdx) => <div className="rewriteGroup" key={groupIdx}><div className="rewriteGroupHead"><label><input type="checkbox" checked={g.enabled} onChange={e => patchGroup(groupIdx, { enabled: e.target.checked })} /> Group enabled</label><label>Group name<input value={g.name} onChange={e => patchGroup(groupIdx, { name: e.target.value })} placeholder="Group A" /></label><button type="button" onClick={() => removeGroup(groupIdx)}>Remove group</button></div><div className="rewriteRules">{g.rules.map((r, ruleIdx) => <div className="rewriteRule" key={ruleIdx}><label><input type="checkbox" checked={r.enabled} onChange={e => patchRule(groupIdx, ruleIdx, { enabled: e.target.checked })} /> Rule enabled</label><label>From model<input value={r.fromModel} onChange={e => patchRule(groupIdx, ruleIdx, { fromModel: e.target.value })} placeholder="cx/gpt-5.5" /></label><div className="rewriteTargets"><span>Target models</span>{r.toModels.map((target, targetIdx) => <div className="rewriteTarget" key={targetIdx}><input value={target} onChange={e => patchTarget(groupIdx, ruleIdx, targetIdx, e.target.value)} placeholder={`v${targetIdx + 1}/cx/gpt-5.5`} /><button type="button" onClick={() => removeTarget(groupIdx, ruleIdx, targetIdx)}>Remove target</button></div>)}<button type="button" onClick={() => addTarget(groupIdx, ruleIdx)}>Add target</button></div><label>Sticky<input type="number" min={1} value={r.stickyCount} onChange={e => patchRule(groupIdx, ruleIdx, { stickyCount: Math.max(1, Number(e.target.value) || 1) })} /></label><button type="button" onClick={() => removeRule(groupIdx, ruleIdx)}>Remove rule</button></div>)}</div><button type="button" onClick={() => addRule(groupIdx)}>Add rule</button></div>)}</div><div className="actions"><button type="button" onClick={addGroup}>Add group</button><button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save rewrite config'}{dirty ? ' *' : ''}</button></div></section>;
-}
-
-function FinalFallbackPanel({ config, onSave, saving }: { config: FinalFallbackConfig | null; onSave: (cfg: FinalFallbackConfig) => Promise<void>; saving: boolean }) {
-  const [enabled, setEnabled] = useState(false);
-  const [model, setModel] = useState('');
-  const [dirty, setDirty] = useState(false);
-  useEffect(() => { if (dirty) return; setEnabled(Boolean(config?.enabled)); setModel(config?.model ?? ''); }, [config, dirty]);
-  const missingModel = finalFallbackNeedsModel({ enabled, model });
-  const save = async () => {
-    if (missingModel) return;
-    await onSave({ enabled, model: model.trim() });
-    setDirty(false);
-  };
-  return <section className="attention fallbackPanel"><h2>Cấu hình ngoài cùng — Final fallback</h2><div className="fallbackFields"><label><input type="checkbox" checked={enabled} onChange={e => { setDirty(true); setEnabled(e.target.checked); }} /> Enable final fallback</label><label>Fallback model<input value={model} onChange={e => { setDirty(true); setModel(e.target.value); }} placeholder="stable/model" /></label></div>{missingModel && <p className="formError">Fallback model is required when enabled.</p>}<div className="actions"><button onClick={save} disabled={saving || missingModel}>{saving ? 'Saving...' : 'Save final fallback'}{dirty ? ' *' : ''}</button></div></section>;
-}
-
-function ImageProxyPanel({ config, onSave, saving }: { config: ImageProxyConfig | null; onSave: (cfg: ImageProxyConfig) => Promise<void>; saving: boolean }) {
-  const [enabled, setEnabled] = useState(false);
-  const [upstreamBaseUrl, setUpstreamBaseUrl] = useState('https://shopapikey.com/v1');
-  const [authMode, setAuthMode] = useState<ImageProxyConfig['authMode']>('pass-through');
-  const [modelOverride, setModelOverride] = useState('');
-  const [dirty, setDirty] = useState(false);
-  useEffect(() => { if (dirty) return; setEnabled(Boolean(config?.enabled)); setUpstreamBaseUrl(config?.upstreamBaseUrl ?? 'https://shopapikey.com/v1'); setAuthMode(config?.authMode ?? 'pass-through'); setModelOverride(config?.modelOverride ?? ''); }, [config, dirty]);
-  const save = async () => {
-    await onSave({ enabled, upstreamBaseUrl, authMode, modelOverride: modelOverride.trim() });
-    setDirty(false);
-  };
-  return <section className="attention fallbackPanel"><h2>Image proxy routing</h2><p>Route /v1/images/generations and /v1/images/edits directly to selected image upstream. Chat/text requests stay on 9router.</p><div className="fallbackFields"><label><input type="checkbox" checked={enabled} onChange={e => { setDirty(true); setEnabled(e.target.checked); }} /> Enable image direct proxy</label><label>Upstream<select value={upstreamBaseUrl} onChange={e => { setDirty(true); setUpstreamBaseUrl(e.target.value); }}>{IMAGE_PROXY_ALLOWED_BASE_URLS.map(url => <option key={url} value={url}>{url}</option>)}</select></label><label>Auth mode<select value={authMode} onChange={e => { setDirty(true); setAuthMode(e.target.value as ImageProxyConfig['authMode']); }}><option value="pass-through">Pass through client Authorization</option><option value="server-key">Server key override (IMAGE_PROXY_API_KEY)</option></select></label><label>Model override (optional)<input value={modelOverride} onChange={e => { setDirty(true); setModelOverride(e.target.value); }} placeholder="cx/gpt-5.4-image" /></label></div><div className="actions"><button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save image proxy'}{dirty ? ' *' : ''}</button></div></section>;
-}
-
-function ImageUsagePanel({ usage }: { usage: ImageUsageSummary | null }) {
-  const recent = usage?.events.slice(0, 8) ?? [];
-  return <section className="attention imageUsagePanel"><h2>Image Studio usage</h2><div className="imageUsageStats"><label>Images today<b>{fmt(usage?.todayImages)}</b></label><label>Total images<b>{fmt(usage?.totalImages)}</b></label><label>Success<b>{fmt(usage?.success)}</b></label><label>Errors<b>{fmt(usage?.errors)}</b></label><label>Bytes<b>{fmtBytes(usage?.bytes)}</b></label></div><div className="imageEvents">{recent.length ? recent.map(e => <div className={`imageEvent ${e.status}`} key={e.id}><div><b>{e.model}</b><span>{e.size ?? '—'} · {e.kind}</span></div><p>{e.prompt_preview || e.error || '—'}</p><em>{vnDateTime(e.created_at)} · {fmt(e.image_count)} img · {fmtBytes(e.bytes)}</em></div>) : <p>No image jobs yet.</p>}</div></section>;
-}
-
-function attention(k: KeyUsageSummary) {
-  return ['danger', 'expired', 'warning', 'unlimited'].includes(k.status);
-}
+import { AdminKeysSection } from './AdminKeys';
+import { AttentionPanel, AdminSummaryCards, RecommendedFlow } from './AdminOverview';
+import { ImageUsagePanel } from './AdminImages';
+import { FinalFallbackPanel, ImageProxyPanel, ModelRewritePanel, type RewriteDraftGroup } from './AdminRouting';
+import { AdminTabBar } from './AdminTabBar';
+import type { Audit } from './adminTypes';
+import { DEFAULT_ADMIN_TAB, getAdminTabCounts, isKeyAttention, type AdminTab } from './adminTabs';
 
 export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l: Lang) => void; onLogout: () => void }) {
   const t = dict[lang];
@@ -126,6 +25,7 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
   const [saving, setSaving] = useState('');
   const [selected, setSelected] = useState<KeyUsageSummary | null>(null);
   const [filter, setFilter] = useState<Filter>('attention');
+  const [activeTab, setActiveTab] = useState<AdminTab>(DEFAULT_ADMIN_TAB);
 
   async function refresh() {
     try {
@@ -146,8 +46,8 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
 
   useEffect(() => { refresh(); const id = setInterval(refresh, 15000); return () => clearInterval(id); }, []);
 
-  const totals = useMemo(() => keys.reduce((a, k) => ({ total: a.total + k.total, req: a.req + k.req, active: a.active + (k.isActive ? 1 : 0), attention: a.attention + (attention(k) ? 1 : 0), cost: a.cost + k.cost }), { total: 0, req: 0, active: 0, attention: 0, cost: 0 }), [keys]);
-  const visible = keys.filter(k => filter === 'all' ? true : filter === 'attention' ? attention(k) : k.status === filter);
+  const totals = useMemo(() => keys.reduce((a, k) => ({ total: a.total + k.total, req: a.req + k.req, active: a.active + (k.isActive ? 1 : 0), attention: a.attention + (isKeyAttention(k) ? 1 : 0), cost: a.cost + k.cost }), { total: 0, req: 0, active: 0, attention: 0, cost: 0 }), [keys]);
+  const tabCounts = useMemo(() => getAdminTabCounts(keys, imageUsage), [keys, imageUsage]);
 
   async function savePolicy(k: KeyUsageSummary, form: HTMLFormElement) {
     const fd = new FormData(form);
@@ -207,5 +107,5 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
     onLogout();
   }
 
-  return <main><header><div><h1>{t.title}</h1><p>{t.subtitle}</p></div><div className="headActions"><select value={lang} onChange={e => setLang(e.target.value as Lang)}><option value="vi">VI</option><option value="en">EN</option></select><button onClick={refresh}>{t.refresh}</button><button type="button" onClick={logout}>{t.logout}</button></div></header>{error && <pre className="error">{error}</pre>}{config && !config.ok && <section className="setup"><h2>{t.setup}</h2>{config.errors.map(e => <p key={e}>{e}</p>)}</section>}<section className="cards"><div className="card primary"><span>{t.needs}</span><strong>{fmt(totals.attention)}</strong></div><div className="card"><span>{t.tokens}</span><strong>{fmt(totals.total)}</strong></div><div className="card"><span>{t.req}</span><strong>{fmt(totals.req)}</strong></div><div className="card"><span>{t.active}</span><strong>{fmt(totals.active)} / {fmt(keys.length)}</strong></div><div className="card"><span>{t.cost}</span><strong>${totals.cost.toFixed(4)}</strong></div><div className="card"><span>{t.auto}</span><strong>{config?.hardDisable ? 'ON' : 'DRY RUN'}</strong></div></section><section className="flow"><b>{t.flow}</b><span>{t.f1}</span><span>{t.f2}</span><span>{t.f3}</span><span>{t.f4}</span></section><section className="attention"><h2>{t.needs}</h2>{keys.filter(attention).length === 0 ? <p>{t.healthy}</p> : keys.filter(attention).map(k => <button className={`issue ${k.status}`} key={k.keyId} onClick={() => setSelected(k)}><b>{k.name}</b><span>{k.statusReason}</span><em>{recommendation(k.status, k.actionOnLimit, config?.hardDisable, lang)}</em></button>)}</section><section className="toolbar">{(['attention', 'all', 'danger', 'warning', 'unlimited', 'expired', 'inactive', 'ok'] as Filter[]).map(f => <button key={f} className={filter === f ? 'active' : ''} onClick={() => setFilter(f)}>{filterLabel(f, lang)}</button>)}</section><section className="tableWrap"><table><thead><tr><th>{t.status}</th><th>{t.name}</th><th>{t.usage}</th><th>{t.tokens}</th><th>{t.daily}</th><th>{t.window}</th><th>{t.action}</th><th>{t.last}</th></tr></thead><tbody>{visible.map(k => <tr key={k.keyId} onClick={() => setSelected(k)}><td><span className={`pill ${k.status}`}>{statusLabel(k.status, lang)}</span></td><td><b>{k.name}</b><br /><code>{k.keyMasked}</code></td><td><div className="meter"><div style={{ width: `${Math.min(k.percentOfLimit ?? 0, 100)}%` }} /></div>{pct(k.percentOfLimit)}</td><td>{fmt(k.total)}</td><td>{fmt(k.tokenLimit)}</td><td>{k.resetPolicy}</td><td>{k.actionOnLimit}</td><td>{vnDateTime(k.lastUsageAt)}</td></tr>)}</tbody></table></section><ImageUsagePanel usage={imageUsage} /><ModelRewritePanel config={rewriteConfig} onSave={saveRewriteConfig} saving={saving === 'model-rewrite'} /><FinalFallbackPanel config={finalFallbackConfig} onSave={saveFinalFallbackConfig} saving={saving === 'final-fallback'} /><ImageProxyPanel config={imageProxyConfig} onSave={saveImageProxyConfig} saving={saving === 'image-proxy'} />{selected && <KeyDrawer selected={selected} audit={audit} config={config} lang={lang} saving={saving} onClose={() => setSelected(null)} onQuickDaily={quickDaily} onSavePolicy={savePolicy} onResetWindow={resetWindow} />}</main>;
+  return <main><header><div><h1>{t.title}</h1><p>{t.subtitle}</p></div><div className="headActions"><select value={lang} onChange={e => setLang(e.target.value as Lang)}><option value="vi">VI</option><option value="en">EN</option></select><button onClick={refresh}>{t.refresh}</button><button type="button" onClick={logout}>{t.logout}</button></div></header>{error && <pre className="error">{error}</pre>}{config && !config.ok && <section className="setup"><h2>{t.setup}</h2>{config.errors.map(e => <p key={e}>{e}</p>)}</section>}<section className="adminShell"><AdminTabBar active={activeTab} counts={tabCounts} lang={lang} onChange={setActiveTab} /><div className="adminTabPanel" role="tabpanel">{activeTab === 'overview' && <><AdminSummaryCards config={config} keys={keys} lang={lang} totals={totals} /><RecommendedFlow lang={lang} /><AttentionPanel config={config} keys={keys} lang={lang} onSelect={setSelected} /></>}{activeTab === 'keys' && <AdminKeysSection filter={filter} keys={keys} lang={lang} onFilter={setFilter} onSelect={setSelected} />}{activeTab === 'images' && <ImageUsagePanel usage={imageUsage} />}{activeTab === 'routing' && <><ModelRewritePanel config={rewriteConfig} onSave={saveRewriteConfig} saving={saving === 'model-rewrite'} /><FinalFallbackPanel config={finalFallbackConfig} onSave={saveFinalFallbackConfig} saving={saving === 'final-fallback'} /><ImageProxyPanel config={imageProxyConfig} onSave={saveImageProxyConfig} saving={saving === 'image-proxy'} /></>}</div></section>{selected && <KeyDrawer selected={selected} audit={audit} config={config} lang={lang} saving={saving} onClose={() => setSelected(null)} onQuickDaily={quickDaily} onSavePolicy={savePolicy} onResetWindow={resetWindow} />}</main>;
 }
