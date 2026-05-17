@@ -73,7 +73,7 @@ Relevant APIs:
 Production currently serves this at:
 
 ```text
-https://admin.gocinema.io.vn/images
+https://user.gocinema.io.vn/images
 ```
 
 Production image proxy expectations:

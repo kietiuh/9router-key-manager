@@ -12,7 +12,7 @@ The goal is to let a user paste a GoCinema key, enter an image prompt, optionall
 
 ## User flow
 
-1. User opens `https://admin.gocinema.io.vn/images`.
+1. User opens `https://user.gocinema.io.vn/images`.
 2. User enters a GoCinema key (`sk-...`).
 3. User enters an image prompt.
 4. Optional: click **Tối ưu prompt**.
@@ -32,7 +32,7 @@ Current production runs the key-manager service behind Caddy:
 
 ```text
 Browser
-→ https://admin.gocinema.io.vn/images
+→ https://user.gocinema.io.vn/images
 → Caddy
 → 9router-key-manager on 127.0.0.1:3000
 → public image APIs
@@ -52,7 +52,7 @@ journalctl -u 9router-key-manager -f
 Current known production values:
 
 ```text
-Domain: https://admin.gocinema.io.vn
+Domain: https://user.gocinema.io.vn
 Service: 9router-key-manager
 Public page: /images
 Health: /api/health
@@ -99,7 +99,7 @@ Optional/common:
 ```bash
 NODE_ENV=production
 COOKIE_SECURE=true
-CORS_ORIGINS=https://admin.gocinema.io.vn
+CORS_ORIGINS=https://admin.gocinema.io.vn,https://user.gocinema.io.vn
 KEY_MANAGER_DB=/root/.local/state/9router-key-manager/manager.sqlite
 NINE_ROUTER_DIR=/root/.9router
 ```
@@ -290,8 +290,8 @@ Verify:
 ```bash
 systemctl is-active 9router-key-manager
 curl -sS http://127.0.0.1:3000/api/health
-curl -sS -o /tmp/images-page.html -w 'images_http=%{http_code} size=%{size_download}\n' https://admin.gocinema.io.vn/images
-curl -sS -o /tmp/check-page.html -w 'check_http=%{http_code} size=%{size_download}\n' https://admin.gocinema.io.vn/check
+curl -sS -o /tmp/images-page.html -w 'images_http=%{http_code} size=%{size_download}\n' https://user.gocinema.io.vn/images
+curl -sS -o /tmp/check-page.html -w 'check_http=%{http_code} size=%{size_download}\n' https://user.gocinema.io.vn/check
 ```
 
 Optional API smoke tests with a real active GoCinema key:
