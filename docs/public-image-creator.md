@@ -316,3 +316,32 @@ Image generation can take 60-120 seconds depending on upstream.
 - Image generation response can be large (~2 MB base64 for 1024x1024). Avoid putting it into logs.
 - The public page route is unauthenticated by design. The API relies on GoCinema key validation; add rate limiting before broad public launch.
 - If 9router storage migrates between `db.json` and SQLite, ensure key validation still reads the same source as runtime/UI.
+
+## Reviewer notes for UX hardening changes
+
+This update intentionally keeps the production contract stable:
+
+- `/api/public/images/generate` remains synchronous.
+- The response still returns base64 image data in JSON.
+- `/images` and `/image` remain public routes.
+- Image generation still uses the stored image proxy config.
+- `authMode: "server-key"` still keeps `IMAGE_PROXY_API_KEY` server-side.
+- Generation still appends the production quality suffix, but the suffix is now idempotent so a fallback-optimized prompt is not duplicated during generation.
+
+Review focus:
+
+- Prompt behavior: `enhanceImagePrompt()` should append the quality suffix once and preserve existing prod wording.
+- Error UX: API errors are parsed from both flat `{ "error": "..." }` and nested OpenAI-style `{ "error": { "message": "..." } }` responses before being shown in the browser.
+- Public page UX: users can choose whether to remember the GoCinema key, clear it, see a 60-120 second generation hint, and inspect the final upstream prompt.
+- Admin observability: dashboard now reads `/api/images/usage` and displays image counts, errors, byte volume, and recent public image/proxy usage rows.
+- Config docs: `.env.example` includes local values needed to mirror the production shape without committing secrets.
+
+Suggested review commands:
+
+```bash
+npm test
+npx tsc --noEmit
+npm run build
+```
+
+`npm run lint` currently cannot run in this repo because ESLint 10 requires `eslint.config.*` and the repository does not include one yet.

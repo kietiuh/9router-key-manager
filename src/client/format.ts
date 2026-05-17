@@ -1,5 +1,11 @@
 export const fmt = (n?: number | null) => n == null ? '—' : n.toLocaleString();
 export const pct = (n?: number | null) => n == null ? '—' : `${n.toFixed(1)}%`;
+export const bytes = (n?: number | null) => {
+  if (n == null) return '—';
+  if (n >= 1024 * 1024) return `${Number((n / 1024 / 1024).toFixed(1))} MB`;
+  if (n < 1024) return `${n} B`;
+  return `${Number((n / 1024).toFixed(1))} KB`;
+};
 
 export function vnDateTime(utc?: string | null) {
   if (!utc) return '—';
