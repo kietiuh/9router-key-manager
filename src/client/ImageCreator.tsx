@@ -166,8 +166,8 @@ export function ImageCreator() {
       {!historyLoaded && <p>Nhập key rồi bấm “Ảnh 24h” để xem ảnh đã tạo bằng key này.</p>}
       {historyLoaded && history.length === 0 && <div className="emptyPreview small">Chưa có ảnh còn hạn 24h.</div>}
       <div className="historyGrid">{history.map(img => <article key={img.id} className="historyItem">
-        <div><b>#{img.id}</b><span>{img.model} · {img.size}</span><p>{img.promptPreview}</p></div>
-        <span>{img.bytes ? fmtBytes(img.bytes) : ''}{img.estimatedTotalTokens ? ` · ${img.estimatedTotalTokens.toLocaleString()} token` : ''}</span>
+        <div><b>#{img.id}</b><span>{img.size}</span><p>{img.promptPreview}</p></div>
+        <span>{img.bytes ? fmtBytes(img.bytes) : ''}</span>
         <span>Hết hạn: {img.expiresAt ? new Date(img.expiresAt).toLocaleString() : '24h'}</span>
         <button type="button" onClick={() => downloadHistory(img.id)}>Download</button>
       </article>)}</div>
