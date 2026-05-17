@@ -22,6 +22,7 @@ import { createFinalFallbackStore } from './services/finalFallback.js';
 import { fetchUpstreamWithFailover, ProxyFailoverError, TrafficAcquireError } from './services/proxyFailover.js';
 import { TrafficLimiter, readTrafficLimitConfig, type TrafficLease } from './services/trafficLimiter.js';
 import { buildImageProxyUrl, getImageProxyConfig, isImageProxyPath, maybeRewriteImageModel, parseImageUsage, saveImageProxyConfig } from './services/imageProxy.js';
+import { enhanceImagePrompt } from './services/publicImage.js';
 import { imageProxyNeedsServerKey } from '../shared/imageProxy.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
@@ -80,7 +81,7 @@ function guardImagePrompt(prompt: string) {
 }
 function fallbackOptimizedPrompt(prompt: string) {
   const clean = guardImagePrompt(prompt);
-  return `${clean}, high quality, coherent composition, sharp focus, detailed lighting, cinematic color grading, polished digital art, no text, no watermark, no distorted hands, no extra fingers, no blurry face`;
+  return enhanceImagePrompt(clean);
 }
 function extractChatContent(json: any) { return String(json?.choices?.[0]?.message?.content ?? json?.output_text ?? '').trim(); }
 function extractChatStreamContent(text: string) {
