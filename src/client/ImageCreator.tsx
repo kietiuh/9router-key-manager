@@ -3,10 +3,15 @@ import { api } from './api';
 import { bytes as fmtBytes } from './format';
 
 type OptimizeResponse = { prompt: string; source: 'optimized' | 'fallback' };
-type GenerateResponse = { image: string; mimeType: string; filename: string; revisedPrompt?: string; prompt: string; bytes: number; expiresAt?: string };
+type ImageFileResponse = { image: string; mimeType: string; filename: string; bytes: number; expiresAt?: string };
+type GenerateResponse = ImageFileResponse & { revisedPrompt?: string; prompt: string };
 type HistoryItem = { id: number; model: string; size?: string; promptPreview?: string; bytes?: number; estimatedTotalTokens?: number; createdAt: string; expiresAt?: string };
 type HistoryResponse = { images: HistoryItem[] };
+type HistoryPreview = ImageFileResponse & { id: number };
 
+const imageKeyStorage = 'gocinema:imageKey';
+const busyOptimize = 'optimize';
+const busyGenerate = 'generate';
 const samplePrompt = 'A cinematic Vietnamese dragon made of golden light flying above Ha Long Bay at sunrise, ultra detailed, magical atmosphere';
 const imageErrorLabels: Record<string, string> = {
   'invalid key': 'Key không hợp lệ hoặc đã bị tắt.',
@@ -28,23 +33,26 @@ function safeName() {
 }
 
 export function ImageCreator() {
-  const savedKey = localStorage.getItem('gocinema:imageKey') || '';
+  const savedKey = localStorage.getItem(imageKeyStorage) || '';
   const [key, setKey] = useState(savedKey);
   const [rememberKey, setRememberKey] = useState(Boolean(savedKey));
   const [prompt, setPrompt] = useState('');
   const [optimizedPrompt, setOptimizedPrompt] = useState('');
   const [optimizeSource, setOptimizeSource] = useState<OptimizeResponse['source'] | ''>('');
   const [size, setSize] = useState('1024x1024');
-  const [busy, setBusy] = useState<'optimize' | 'generate' | ''>('');
+  const [busy, setBusy] = useState<typeof busyOptimize | typeof busyGenerate | ''>('');
   const [error, setError] = useState('');
   const [result, setResult] = useState<GenerateResponse | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [previewingId, setPreviewingId] = useState<number | null>(null);
+  const [historyPreview, setHistoryPreview] = useState<HistoryPreview | null>(null);
 
   const activePrompt = useMemo(() => (optimizedPrompt || prompt).trim(), [optimizedPrompt, prompt]);
 
   async function optimize() {
-    setError(''); setResult(null); setBusy('optimize');
+    setError(''); setResult(null); setBusy(busyOptimize);
     try {
       const res = await api<OptimizeResponse>('/api/public/images/optimize-prompt', {
         method: 'POST',
@@ -58,10 +66,10 @@ export function ImageCreator() {
   }
 
   async function generate() {
-    setError(''); setResult(null); setBusy('generate');
+    setError(''); setResult(null); setBusy(busyGenerate);
     try {
-      if (rememberKey) localStorage.setItem('gocinema:imageKey', key.trim());
-      else localStorage.removeItem('gocinema:imageKey');
+      if (rememberKey) localStorage.setItem(imageKeyStorage, key.trim());
+      else localStorage.removeItem(imageKeyStorage);
       const res = await api<GenerateResponse>('/api/public/images/generate', {
         method: 'POST',
         body: JSON.stringify({ key: key.trim(), prompt: activePrompt, size }),
@@ -74,35 +82,53 @@ export function ImageCreator() {
   }
 
   async function loadHistory() {
-    setError(''); setBusy('optimize');
+    setError(''); setHistoryLoading(true);
     try {
       const res = await api<HistoryResponse>('/api/public/images/history', { method: 'POST', body: JSON.stringify({ key: key.trim() }) });
       setHistory(res.images); setHistoryLoaded(true);
     } catch (e: any) { setError(friendlyImageError(e?.message || 'Load history failed')); }
-    finally { setBusy(''); }
+    finally { setHistoryLoading(false); }
+  }
+
+  async function fetchHistoryImage(id: number) {
+    return api<ImageFileResponse>('/api/public/images/download', { method: 'POST', body: JSON.stringify({ key: key.trim(), id }) });
+  }
+
+  function imageDataUrl(image: ImageFileResponse) {
+    return `data:${image.mimeType};base64,${image.image}`;
+  }
+
+  function saveImageFile(image: ImageFileResponse, fallbackName: string) {
+    const a = document.createElement('a');
+    a.href = imageDataUrl(image);
+    a.download = image.filename || fallbackName;
+    a.click();
+  }
+
+  async function previewHistory(id: number) {
+    setError(''); setPreviewingId(id);
+    try {
+      const res = await fetchHistoryImage(id);
+      setHistoryPreview({ ...res, id });
+    } catch (e: any) { setError(friendlyImageError(e?.message || 'Preview failed')); }
+    finally { setPreviewingId(null); }
   }
 
   async function downloadHistory(id: number) {
     setError('');
     try {
-      const res = await api<GenerateResponse>('/api/public/images/download', { method: 'POST', body: JSON.stringify({ key: key.trim(), id }) });
-      const a = document.createElement('a');
-      a.href = `data:${res.mimeType};base64,${res.image}`;
-      a.download = res.filename || `gocinema-image-${id}.png`;
-      a.click();
+      const res = await fetchHistoryImage(id);
+      saveImageFile(res, `gocinema-image-${id}.png`);
     } catch (e: any) { setError(friendlyImageError(e?.message || 'Download failed')); }
   }
 
   function download() {
     if (!result) return;
-    const a = document.createElement('a');
-    a.href = `data:${result.mimeType};base64,${result.image}`;
-    a.download = result.filename || safeName();
-    a.click();
+    saveImageFile(result, safeName());
   }
 
   function clearKey() {
-    localStorage.removeItem('gocinema:imageKey');
+    localStorage.removeItem(imageKeyStorage);
     setRememberKey(false);
     setKey('');
   }
@@ -137,11 +163,11 @@ export function ImageCreator() {
           <button type="button" onClick={() => setPrompt(samplePrompt)}>Prompt mẫu</button>
         </div>
         <div className="actions imageActions">
-          <button type="button" onClick={optimize} disabled={!!busy || !key.trim() || !prompt.trim()}>{busy === 'optimize' ? 'Đang tối ưu...' : 'Tối ưu prompt'}</button>
-          <button type="button" onClick={generate} disabled={!!busy || !key.trim() || !activePrompt}>{busy === 'generate' ? 'Đang tạo ảnh...' : 'Tạo ảnh'}</button>
-          <button type="button" onClick={loadHistory} disabled={!!busy || !key.trim()}>{busy === 'optimize' && historyLoaded ? 'Đang tải...' : 'Ảnh 24h'}</button>
+          <button type="button" onClick={optimize} disabled={!!busy || !key.trim() || !prompt.trim()}>{busy === busyOptimize ? 'Đang tối ưu...' : 'Tối ưu prompt'}</button>
+          <button type="button" onClick={generate} disabled={!!busy || !key.trim() || !activePrompt}>{busy === busyGenerate ? 'Đang tạo ảnh...' : 'Tạo ảnh'}</button>
+          <button type="button" onClick={loadHistory} disabled={!!busy || historyLoading || !key.trim()}>{historyLoading ? 'Đang tải...' : 'Ảnh 24h'}</button>
         </div>
-        {busy === 'generate' && <p className="hintText">Ảnh thường mất 60-120 giây tùy upstream. Giữ trang này mở trong lúc xử lý.</p>}
+        {busy === busyGenerate && <p className="hintText">Ảnh thường mất 60-120 giây tùy upstream. Giữ trang này mở trong lúc xử lý.</p>}
         {error && <pre className="error">{error}</pre>}
       </div>
 
@@ -150,27 +176,49 @@ export function ImageCreator() {
         <textarea value={activePrompt} onChange={e => { setOptimizedPrompt(e.target.value); }} rows={10} placeholder="Prompt tối ưu sẽ hiện ở đây" />
         {optimizedPrompt && <p className="okText">{optimizeSource === 'fallback' ? 'Đã dùng tối ưu local vì upstream không trả prompt.' : 'Đã tối ưu prompt.'} Có thể sửa trước khi tạo.</p>}
         {result ? <div className="resultBox">
-          <img src={`data:${result.mimeType};base64,${result.image}`} alt="Generated" />
+          <img src={imageDataUrl(result)} alt="Generated" />
           <div className="imageActions">
             <button type="button" onClick={download}>Download ảnh</button>
             <span>{fmtBytes(result.bytes)}{result.expiresAt ? ` · lưu đến ${new Date(result.expiresAt).toLocaleString()}` : ''}</span>
           </div>
           <details><summary>Prompt đã gửi upstream</summary><p>{result.prompt}</p></details>
           {result.revisedPrompt && <details><summary>Revised prompt</summary><p>{result.revisedPrompt}</p></details>}
-        </div> : <div className="emptyPreview">Ảnh sẽ hiện ở đây sau khi tạo.</div>}
+        </div> : <div className={`emptyPreview ${busy === busyGenerate ? 'generating' : ''}`}>
+          {busy === busyGenerate ? <div className="generatingPreview" role="status" aria-live="polite">
+            <div className="imageLoadingFrame"><span /></div>
+            <b>Đang tạo ảnh...</b>
+            <p>Ảnh sẽ hiện ở đây ngay khi hoàn tất.</p>
+          </div> : 'Ảnh sẽ hiện ở đây sau khi tạo.'}
+        </div>}
       </div>
     </section>
 
     <section className="imagePanel historyPanel">
-      <div className="historyHead"><h2>Ảnh đã tạo trong 24 giờ</h2><button type="button" onClick={loadHistory} disabled={!!busy || !key.trim()}>Refresh</button></div>
+      <div className="historyHead"><h2>Ảnh đã tạo trong 24 giờ</h2><button type="button" onClick={loadHistory} disabled={!!busy || historyLoading || !key.trim()}>{historyLoading ? 'Đang tải...' : 'Refresh'}</button></div>
       {!historyLoaded && <p>Nhập key rồi bấm “Ảnh 24h” để xem ảnh đã tạo bằng key này.</p>}
       {historyLoaded && history.length === 0 && <div className="emptyPreview small">Chưa có ảnh còn hạn 24h.</div>}
       <div className="historyGrid">{history.map(img => <article key={img.id} className="historyItem">
-        <div><b>#{img.id}</b><span>{img.size}</span><p>{img.promptPreview}</p></div>
-        <span>{img.bytes ? fmtBytes(img.bytes) : ''}</span>
-        <span>Hết hạn: {img.expiresAt ? new Date(img.expiresAt).toLocaleString() : '24h'}</span>
-        <button type="button" onClick={() => downloadHistory(img.id)}>Download</button>
+        <div className="historyPreviewTile" aria-hidden="true"><span>PNG</span></div>
+        <div className="historyMeta">
+          <div><b>#{img.id}</b><span>{img.size || 'Ảnh'}</span></div>
+          <span>{img.bytes ? fmtBytes(img.bytes) : '—'}</span>
+        </div>
+        <span className="historyExpiry">Hết hạn: {img.expiresAt ? new Date(img.expiresAt).toLocaleString() : '24h'}</span>
+        <div className="historyActions">
+          <button type="button" onClick={() => previewHistory(img.id)} disabled={previewingId === img.id}>{previewingId === img.id ? 'Đang mở...' : 'Xem trước'}</button>
+          <button type="button" onClick={() => downloadHistory(img.id)}>Download</button>
+        </div>
       </article>)}</div>
     </section>
+    {historyPreview && <div className="imagePreviewModal" role="dialog" aria-modal="true" aria-label={`Xem trước ảnh #${historyPreview.id}`} onClick={() => setHistoryPreview(null)}>
+      <div className="imagePreviewDialog" onClick={e => e.stopPropagation()}>
+        <div className="historyHead"><h2>Ảnh #{historyPreview.id}</h2><button type="button" onClick={() => setHistoryPreview(null)}>Đóng</button></div>
+        <img src={imageDataUrl(historyPreview)} alt={`Ảnh đã tạo #${historyPreview.id}`} />
+        <div className="imageActions">
+          <button type="button" onClick={() => saveImageFile(historyPreview, `gocinema-image-${historyPreview.id}.png`)}>Download</button>
+          <span>{fmtBytes(historyPreview.bytes)}{historyPreview.expiresAt ? ` · lưu đến ${new Date(historyPreview.expiresAt).toLocaleString()}` : ''}</span>
+        </div>
+      </div>
+    </div>}
   </main>;
 }
