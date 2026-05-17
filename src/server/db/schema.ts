@@ -68,6 +68,8 @@ export function migrate(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_usage_events_time ON usage_events (timestamp);
     CREATE TABLE IF NOT EXISTS image_usage_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key_id TEXT,
+      api_key TEXT,
       kind TEXT NOT NULL,
       model TEXT NOT NULL,
       size TEXT,
@@ -80,6 +82,10 @@ export function migrate(db: Database.Database): void {
       error TEXT,
       image_count INTEGER NOT NULL DEFAULT 1,
       bytes INTEGER,
+      estimated_prompt_tokens INTEGER,
+      estimated_completion_tokens INTEGER,
+      estimated_total_tokens INTEGER,
+      usage_event_signature TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS app_settings (
@@ -115,6 +121,18 @@ export function migrate(db: Database.Database): void {
   const names = new Set(cols.map(c => c.name));
   if (!names.has('usage_multiplier')) db.exec('ALTER TABLE key_policies ADD COLUMN usage_multiplier REAL NOT NULL DEFAULT 1.0');
   if (!names.has('usage_multiplier_effective_at')) db.exec('ALTER TABLE key_policies ADD COLUMN usage_multiplier_effective_at TEXT');
+  const imageCols = db.prepare("PRAGMA table_info(image_usage_events)").all() as Array<{ name: string }>;
+  const imageNames = new Set(imageCols.map(c => c.name));
+  if (!imageNames.has('key_id')) db.exec('ALTER TABLE image_usage_events ADD COLUMN key_id TEXT');
+  if (!imageNames.has('api_key')) db.exec('ALTER TABLE image_usage_events ADD COLUMN api_key TEXT');
+  if (!imageNames.has('estimated_prompt_tokens')) db.exec('ALTER TABLE image_usage_events ADD COLUMN estimated_prompt_tokens INTEGER');
+  if (!imageNames.has('estimated_completion_tokens')) db.exec('ALTER TABLE image_usage_events ADD COLUMN estimated_completion_tokens INTEGER');
+  if (!imageNames.has('estimated_total_tokens')) db.exec('ALTER TABLE image_usage_events ADD COLUMN estimated_total_tokens INTEGER');
+  if (!imageNames.has('usage_event_signature')) db.exec('ALTER TABLE image_usage_events ADD COLUMN usage_event_signature TEXT');
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_image_usage_events_key_time ON image_usage_events (key_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_image_usage_events_signature ON image_usage_events (usage_event_signature);
+  `);
   const rewriteCols = db.prepare("PRAGMA table_info(model_rewrite_rules)").all() as Array<{ name: string }>;
   const rewriteNames = new Set(rewriteCols.map(c => c.name));
   if (!rewriteNames.has('group_id')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN group_id INTEGER');

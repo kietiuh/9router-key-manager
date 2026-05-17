@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { migrate } from '../db/schema.js';
-import { ingestUsageHistory, readStoredUsage } from './usageStore.js';
+import { ingestUsageHistory, readStoredUsage, recordSyntheticUsage } from './usageStore.js';
 
 function db() { const d = new Database(':memory:'); migrate(d); return d; }
 
@@ -21,5 +21,13 @@ describe('usageStore', () => {
     expect(ingestUsageHistory(d, rows)).toBe(1);
     expect(ingestUsageHistory(d, rows)).toBe(0);
     expect(readStoredUsage(d)).toHaveLength(1);
+  });
+
+  it('stores synthetic image usage as normal key usage', () => {
+    const d = db();
+    const signature = recordSyntheticUsage(d, { signature: 'synthetic-image|x', apiKey: 'sk-img', model: 'cx/gpt-5.4-image', timestamp: '2026-05-08T02:00:00.000Z', tokens: { prompt_tokens: 10, completion_tokens: 20000, total_tokens: 20010 } } as any);
+    recordSyntheticUsage(d, { signature, apiKey: 'sk-img', model: 'cx/gpt-5.4-image', timestamp: '2026-05-08T02:00:00.000Z', tokens: { prompt_tokens: 10, completion_tokens: 20000, total_tokens: 20010 } } as any);
+    expect(readStoredUsage(d)).toHaveLength(1);
+    expect(readStoredUsage(d)[0].tokens?.total_tokens).toBe(20010);
   });
 });

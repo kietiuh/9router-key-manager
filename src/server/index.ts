@@ -13,7 +13,7 @@ import { Readable } from 'node:stream';
 import { readApiKeys, readUsageHistory, usageSourceStatus } from './parsers/reader.js';
 import { default9routerDir, dbJsonPath, usageJsonPath } from './parsers/paths.js';
 import { summarizeKeyUsage } from './services/usage.js';
-import { ingestUsageHistory, readStoredUsage } from './services/usageStore.js';
+import { ingestUsageHistory, readStoredUsage, recordSyntheticUsage } from './services/usageStore.js';
 import { startOfVietnamDayUtc, resolveWindow, VN_TZ_LABEL } from './utils/time.js';
 import { runWatcherOnce, startWatcher } from './services/watcher.js';
 import { getModelRewriteConfig, rollbackModelRewriteSelection, saveModelRewriteConfig, selectModelRewriteTargets, type RewriteTargetPlan } from './services/modelRewrite.js';
@@ -52,7 +52,7 @@ const LoginBody = z.object({ password: z.string() });
 const PublicKeyCheckBody = z.object({ key: z.string().min(8) });
 const PublicImageOptimizeBody = z.object({ key: z.string().min(8), prompt: z.string().min(3).max(6000) });
 const PublicImageGenerateBody = z.object({ key: z.string().min(8), prompt: z.string().min(3).max(6000), size: z.enum(['1024x1024', '1024x1536', '1536x1024']).optional() });
-const ImageUsageBody = z.object({ kind: z.string(), model: z.string(), size: z.string().optional(), promptPreview: z.string().optional(), promptHash: z.string().optional(), inputFile: z.string().optional(), outputFile: z.string().optional(), drivePath: z.string().optional(), status: z.string(), error: z.string().optional(), imageCount: z.number().int().positive().optional(), bytes: z.number().int().nonnegative().optional() });
+const ImageUsageBody = z.object({ keyId: z.string().optional(), apiKey: z.string().optional(), kind: z.string(), model: z.string(), size: z.string().optional(), promptPreview: z.string().optional(), promptHash: z.string().optional(), inputFile: z.string().optional(), outputFile: z.string().optional(), drivePath: z.string().optional(), status: z.string(), error: z.string().optional(), imageCount: z.number().int().positive().optional(), bytes: z.number().int().nonnegative().optional(), estimatedPromptTokens: z.number().int().nonnegative().optional(), estimatedCompletionTokens: z.number().int().nonnegative().optional(), estimatedTotalTokens: z.number().int().nonnegative().optional(), usageEventSignature: z.string().optional() });
 const ModelRewriteRuleBody = z.object({ id: z.number().int().positive().optional(), groupId: z.number().int().positive().nullable().optional(), enabled: z.boolean().optional(), fromModel: z.string(), toModel: z.string().nullable().optional(), toModels: z.array(z.string()).optional(), stickyCount: z.number().int().positive().optional() });
 const ModelRewriteGroupBody = z.object({ id: z.number().int().positive().optional(), name: z.string().optional(), enabled: z.boolean().optional(), rules: z.array(ModelRewriteRuleBody).optional() });
 const ModelRewriteConfigBody = z.object({ enabled: z.boolean(), groups: z.array(ModelRewriteGroupBody).optional(), rules: z.array(ModelRewriteRuleBody).optional() });
@@ -67,8 +67,17 @@ function resolvedPolicies() { const events = db.prepare('SELECT key_id, multipli
 function refreshUsageStore() { ingestUsageHistory(db, readUsageHistory()); }
 function usageResponse() { const keys = ensurePolicies(); refreshUsageStore(); const usage = readStoredUsage(db); const policies = resolvedPolicies(); return summarizeKeyUsage(keys, usage, policies).sort((a, b) => { const rank = { danger: 0, expired: 1, warning: 2, unlimited: 3, ok: 4, inactive: 5 } as const; return rank[a.status] - rank[b.status] || (Date.parse(b.lastUsageAt ?? '') || 0) - (Date.parse(a.lastUsageAt ?? '') || 0) || (b.percentOfLimit ?? -1) - (a.percentOfLimit ?? -1); }); }
 function imageUsageSummary() { const today = new Date(Date.now()+7*60*60*1000).toISOString().slice(0,10); const rows = db.prepare('SELECT * FROM image_usage_events ORDER BY id DESC LIMIT 200').all() as any[]; const total = db.prepare('SELECT COALESCE(SUM(image_count),0) images, COALESCE(SUM(bytes),0) bytes, SUM(CASE WHEN status=\'success\' THEN 1 ELSE 0 END) success, SUM(CASE WHEN status!=\'success\' THEN 1 ELSE 0 END) errors FROM image_usage_events').get() as any; const todayImages = db.prepare("SELECT COALESCE(SUM(image_count),0) images FROM image_usage_events WHERE date(datetime(created_at, '+7 hours')) = ?").get(today) as any; return { todayImages: Number(todayImages.images||0), totalImages: Number(total.images||0), success: Number(total.success||0), errors: Number(total.errors||0), bytes: Number(total.bytes||0), events: rows }; }
-function recordImageUsage(body:any) { db.prepare(`INSERT INTO image_usage_events (kind, model, size, prompt_preview, prompt_hash, input_file, output_file, drive_path, status, error, image_count, bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(body.kind, body.model, body.size ?? null, body.promptPreview ?? null, body.promptHash ?? null, body.inputFile ?? null, body.outputFile ?? null, body.drivePath ?? null, body.status, body.error ?? null, body.imageCount ?? 1, body.bytes ?? null); return { ok: true }; }
+function estimateTokens(text: string) { return Math.max(1, Math.ceil(Buffer.byteLength(text || '', 'utf8') / 4)); }
+function estimateImageTokens(size: string, imageCount = 1) { const base = size === '1024x1536' || size === '1536x1024' ? 30000 : 20000; return base * imageCount; }
+function recordImageUsage(body:any) { db.prepare(`INSERT INTO image_usage_events (key_id, api_key, kind, model, size, prompt_preview, prompt_hash, input_file, output_file, drive_path, status, error, image_count, bytes, estimated_prompt_tokens, estimated_completion_tokens, estimated_total_tokens, usage_event_signature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(body.keyId ?? null, body.apiKey ?? null, body.kind, body.model, body.size ?? null, body.promptPreview ?? null, body.promptHash ?? null, body.inputFile ?? null, body.outputFile ?? null, body.drivePath ?? null, body.status, body.error ?? null, body.imageCount ?? 1, body.bytes ?? null, body.estimatedPromptTokens ?? null, body.estimatedCompletionTokens ?? null, body.estimatedTotalTokens ?? null, body.usageEventSignature ?? null); return { ok: true }; }
 function recordImageProxyUsage(body:any) { try { recordImageUsage(body); } catch { /* usage logging must not break proxy */ } }
+function recordKeyImageTokenUsage(args: { key: string; keyId: string; kind: string; model: string; promptTokens: number; completionTokens: number; timestamp?: string; sourceId: string }) {
+  const timestamp = args.timestamp ?? new Date().toISOString();
+  const total = args.promptTokens + args.completionTokens;
+  const signature = `synthetic-image|${args.kind}|${args.keyId}|${args.model}|${args.sourceId}`;
+  recordSyntheticUsage(db, { signature, apiKey: args.key, model: args.model, timestamp, provider: 'image-proxy', connectionId: args.kind, tokens: { prompt_tokens: args.promptTokens, completion_tokens: args.completionTokens, total_tokens: total } } as any);
+  return { signature, total };
+}
 function findPublicKey(key: string) { const clean = key.trim(); return ensurePolicies().find(k => k.key === clean && k.isActive !== false); }
 function sanitizeImagePrompt(prompt: string) { return prompt.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 6000); }
 function guardImagePrompt(prompt: string) {
@@ -140,7 +149,14 @@ app.post('/api/public/images/optimize-prompt', async (req, reply) => {
       try { optimized = extractChatContent(JSON.parse(text)); } catch { /* non-json fallback */ }
     }
     optimized = sanitizeImagePrompt(optimized);
-    if (upstream.ok && optimized) return { prompt: guardImagePrompt(optimized), source: 'optimized' };
+    if (upstream.ok && optimized) {
+      const finalPrompt = guardImagePrompt(optimized);
+      const promptTokens = estimateTokens(`${system}\n${prompt}`);
+      const completionTokens = estimateTokens(finalPrompt);
+      const usage = recordKeyImageTokenUsage({ key: match.key, keyId: match.id, kind: 'public-image-optimize', model: 'v1/cx/gpt-5.5', promptTokens, completionTokens, sourceId: crypto.createHash('sha256').update(`${match.id}|${prompt}|${finalPrompt}|${Date.now()}`).digest('hex').slice(0, 16) });
+      recordImageProxyUsage({ keyId: match.id, apiKey: match.key, kind: 'public-image-optimize', model: 'v1/cx/gpt-5.5', promptPreview: prompt.slice(0, 160), promptHash: crypto.createHash('sha256').update(prompt).digest('hex').slice(0, 16), status: 'success', imageCount: 1, estimatedPromptTokens: promptTokens, estimatedCompletionTokens: completionTokens, estimatedTotalTokens: usage.total, usageEventSignature: usage.signature });
+      return { prompt: finalPrompt, source: 'optimized' };
+    }
   } catch { /* fallback below */ }
   return { prompt: fallbackOptimizedPrompt(prompt), source: 'fallback' };
 });
@@ -167,15 +183,18 @@ app.post('/api/public/images/generate', async (req, reply) => {
     const json = await upstream.json().catch(() => ({}));
     const { image, revisedPrompt } = extractImageBase64(json);
     if (!upstream.ok || !image) {
-      recordImageProxyUsage({ kind: 'public-page', model: imageModel, size, promptPreview: prompt.slice(0, 160), status: 'error', error: json?.error?.message || `upstream ${upstream.status}`, imageCount: 1 });
+      recordImageProxyUsage({ keyId: match.id, apiKey: match.key, kind: 'public-page', model: imageModel, size, promptPreview: prompt.slice(0, 160), status: 'error', error: json?.error?.message || `upstream ${upstream.status}`, imageCount: 1 });
       return reply.code(upstream.ok ? 502 : upstream.status).send({ error: json?.error?.message || 'image generation failed' });
     }
     const bytes = Buffer.byteLength(image, 'base64');
-    recordImageProxyUsage({ kind: 'public-page', model: imageModel, size, promptPreview: prompt.slice(0, 160), promptHash: crypto.createHash('sha256').update(prompt).digest('hex').slice(0, 16), status: 'success', imageCount: 1, bytes });
-    req.log.info({ keyId: match.id, model: imageModel, size, bytes, totalMs: Date.now() - started }, 'public image generated');
+    const promptTokens = estimateTokens(payload.prompt);
+    const completionTokens = estimateImageTokens(size, 1);
+    const usage = recordKeyImageTokenUsage({ key: match.key, keyId: match.id, kind: 'public-image-generate', model: imageModel, promptTokens, completionTokens, sourceId: crypto.createHash('sha256').update(`${match.id}|${payload.prompt}|${size}|${started}`).digest('hex').slice(0, 16) });
+    recordImageProxyUsage({ keyId: match.id, apiKey: match.key, kind: 'public-page', model: imageModel, size, promptPreview: prompt.slice(0, 160), promptHash: crypto.createHash('sha256').update(prompt).digest('hex').slice(0, 16), status: 'success', imageCount: 1, bytes, estimatedPromptTokens: promptTokens, estimatedCompletionTokens: completionTokens, estimatedTotalTokens: usage.total, usageEventSignature: usage.signature });
+    req.log.info({ keyId: match.id, model: imageModel, size, bytes, estimatedTokens: usage.total, totalMs: Date.now() - started }, 'public image generated');
     return { image, mimeType: 'image/png', filename: publicImageFilename(), revisedPrompt, prompt: payload.prompt, bytes };
   } catch (err: any) {
-    recordImageProxyUsage({ kind: 'public-page', model: imageModel, size, promptPreview: prompt.slice(0, 160), status: 'error', error: err?.message, imageCount: 1 });
+    recordImageProxyUsage({ keyId: match.id, apiKey: match.key, kind: 'public-page', model: imageModel, size, promptPreview: prompt.slice(0, 160), status: 'error', error: err?.message, imageCount: 1 });
     return reply.code(502).send({ error: 'image upstream error' });
   }
 });

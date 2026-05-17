@@ -44,6 +44,21 @@ export function ingestUsageHistory(db: Database.Database, rows: UsageRecord[]): 
   return tx(rows);
 }
 
+export function recordSyntheticUsage(db: Database.Database, r: UsageRecord & { signature?: string }): string {
+  const t = r.tokens ?? {};
+  const signature = r.signature ?? usageSignature(r);
+  db.prepare(`INSERT OR IGNORE INTO usage_events (
+    signature, api_key, model, provider, connection_id, timestamp, cost,
+    prompt_tokens, completion_tokens, total_tokens,
+    cache_read_input_tokens, cache_creation_input_tokens, reasoning_tokens, raw_json
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    signature, r.apiKey ?? null, r.model ?? null, (r as any).provider ?? null, (r as any).connectionId ?? null, r.timestamp, r.cost ?? null,
+    t.prompt_tokens ?? null, t.completion_tokens ?? null, tokenTotal(r),
+    t.cache_read_input_tokens ?? null, t.cache_creation_input_tokens ?? null, t.reasoning_tokens ?? null, JSON.stringify(r)
+  );
+  return signature;
+}
+
 export function readStoredUsage(db: Database.Database): UsageRecord[] {
   const rows = db.prepare('SELECT raw_json FROM usage_events ORDER BY timestamp ASC, id ASC').all() as Array<{ raw_json: string }>;
   return rows.map(r => JSON.parse(r.raw_json) as UsageRecord);
