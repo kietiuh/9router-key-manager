@@ -113,6 +113,15 @@ function imageHistoryForKey(keyId: string) {
 }
 
 function findPublicKey(key: string) { const clean = key.trim(); return ensurePolicies().find(k => k.key === clean && k.isActive !== false); }
+function findPublicKeyAny(key: string) { const clean = key.trim(); return ensurePolicies().find(k => k.key === clean); }
+function autoDisabledReason(keyId: string): string | null {
+  const row = db.prepare('SELECT reason FROM auto_disabled_keys WHERE key_id = ? ORDER BY disabled_for_window_start DESC LIMIT 1').get(keyId) as { reason?: string } | undefined;
+  return row?.reason ?? null;
+}
+function lastDisableAuditMessage(keyId: string): string | null {
+  const row = db.prepare("SELECT message FROM audit_log WHERE key_id = ? AND action IN ('disable','auto.disable') ORDER BY id DESC LIMIT 1").get(keyId) as { message?: string } | undefined;
+  return row?.message ?? null;
+}
 function sanitizeImagePrompt(prompt: string) { return prompt.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 6000); }
 function guardImagePrompt(prompt: string) {
   const text = sanitizeImagePrompt(prompt);
@@ -153,14 +162,19 @@ app.post('/api/auth/login', async (req, reply) => { const body = LoginBody.parse
 app.post('/api/auth/logout', async (_req, reply) => { reply.clearCookie('admin_session', { path: '/', secure: secureCookie, sameSite: 'lax' }); return reply.code(204).send(); });
 
 app.post('/api/public/key-check', async (req, reply) => {
-  const body = PublicKeyCheckBody.parse(req.body);
-  const match = findPublicKey(body.key);
+  const parsed = PublicKeyCheckBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid key format' });
+  const match = findPublicKeyAny(parsed.data.key);
   if (!match) return reply.code(404).send({ error: 'key not found' });
   refreshUsageStore();
   const usage = readStoredUsage(db);
   const policy = resolvedPolicies().find(p => p.key_id === match.id);
   const summary = summarizeKeyUsage([match], usage, policy ? [policy] : []).at(0);
   if (!summary) return reply.code(404).send({ error: 'key not found' });
+  if (!match.isActive) {
+    const reason = autoDisabledReason(match.id) ?? lastDisableAuditMessage(match.id);
+    if (reason) summary.statusReason = reason;
+  }
   const { modelUsage: _modelUsage, models: _models, ...publicSummary } = summary;
   return publicSummary;
 });
