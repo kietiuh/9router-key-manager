@@ -269,4 +269,31 @@ describe('fetchUpstreamWithFailover', () => {
     result.lease.release();
   });
 
+  it('preserves TTS model/voice by disabling cross-model fallback when requested', async () => {
+    const calls: string[] = [];
+    const limit = limiter();
+    const result = await fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/audio/speech',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['google-tts/vi', 'edge-tts/vi-VN-HoaiMyNeural']),
+      finalFallback: { enabled: true, model: 'cx/gpt-5.5' },
+      disableModelFallback: true,
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      trafficLimiter: limit.trafficLimiter,
+      fetchImpl: async (_url, init) => {
+        calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+        return new Response('{"error":{"message":"tts unavailable"}}', { status: 502 });
+      },
+    });
+
+    expect(calls).toEqual(['google-tts/vi']);
+    expect(limit.acquired).toEqual(['google-tts/vi']);
+    expect(result.model).toBe('google-tts/vi');
+    expect(result.upstream.status).toBe(502);
+    expect(result.attemptCount).toBe(1);
+    result.lease.release();
+  });
+
 });
