@@ -25,6 +25,7 @@ import { TrafficLimiter, readTrafficLimitConfig, type TrafficLease } from './ser
 import { buildImageProxyUrl, getImageProxyConfig, isImageProxyPath, maybeRewriteImageModel, parseImageUsage, saveImageProxyConfig } from './services/imageProxy.js';
 import { enhanceImagePrompt } from './services/publicImage.js';
 import { imageProxyNeedsServerKey } from '../shared/imageProxy.js';
+import { buildQuotaErrorBody, evaluateQuotaInterceptor } from './services/quotaInterceptor.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 3039);
@@ -355,6 +356,22 @@ app.register(async proxyRoutes => {
     const rawBody = method !== 'GET' && method !== 'HEAD'
       ? (Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body == null ? '' : typeof req.body === 'string' ? req.body : JSON.stringify(req.body)))
       : undefined;
+
+    const quota = evaluateQuotaInterceptor({
+      db,
+      authHeader: req.headers.authorization,
+      lookupKey: token => {
+        const match = ensurePolicies().find(k => k.key === token.trim());
+        return match ? { id: match.id } : undefined;
+      },
+    });
+    if (quota.blocked) {
+      req.log.info({ keyId: quota.keyId, retryAfter: quota.retryAfterSeconds, resetAt: quota.resetAt, reason: quota.reason }, 'quota intercept');
+      reply.header('retry-after', String(quota.retryAfterSeconds));
+      if (quota.resetAt) reply.header('x-ratelimit-reset', quota.resetAt);
+      return reply.code(429).send(buildQuotaErrorBody(quota));
+    }
+
     const imageProxyConfig = getImageProxyConfig(db);
     if (imageProxyConfig.enabled && isImageProxyPath(req.raw.url?.split('?')[0] ?? '') && method !== 'GET' && method !== 'HEAD') {
       if (imageProxyNeedsServerKey(imageProxyConfig)) {
