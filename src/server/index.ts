@@ -386,6 +386,7 @@ app.register(async proxyRoutes => {
     const totalStarted = Date.now();
     const userId = maskedUser(req);
     const largeContextThresholdTokens = readTrafficLimitConfig(process.env).largeContextThresholdTokens;
+    const disableModelFallback = req.raw.url?.split('?')[0] === '/v1/audio/speech';
     let lease: TrafficLease | undefined;
     let result;
     let releaseOnFinally = true;
@@ -396,6 +397,7 @@ app.register(async proxyRoutes => {
         headers,
         decision,
         finalFallback: finalFallbackStore.get(),
+        disableModelFallback,
         userId,
         largeContextThresholdTokens,
         trafficLimiter,

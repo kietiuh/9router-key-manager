@@ -44,6 +44,7 @@ export type FetchUpstreamOptions = {
   headers: Headers;
   decision?: RewriteDecision;
   finalFallback?: FinalFallbackConfig;
+  disableModelFallback?: boolean;
   userId: string;
   largeContextThresholdTokens: number;
   trafficLimiter: TrafficLimiterLike;
@@ -62,7 +63,9 @@ function appendFallback(models: string[], decision: RewriteDecision | undefined,
   return [...models, fallbackModel];
 }
 
-function attemptModels(decision: RewriteDecision | undefined, finalFallback: FinalFallbackConfig | undefined): string[] {
+function attemptModels(decision: RewriteDecision | undefined, finalFallback: FinalFallbackConfig | undefined, disableModelFallback = false): string[] {
+  const firstModel = !decision ? 'unknown' : decision.rewritten && decision.targets.length ? decision.targets[0] : decision.model ?? 'unknown';
+  if (disableModelFallback) return [firstModel];
   const models = !decision ? ['unknown'] : decision.rewritten && decision.targets.length ? decision.targets : [decision.model ?? 'unknown'];
   return appendFallback(models, decision, finalFallback);
 }
@@ -94,7 +97,7 @@ function errorStatus(err: any): { statusCode: number; type: string; message: str
 
 export async function fetchUpstreamWithFailover(options: FetchUpstreamOptions): Promise<FetchUpstreamResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const models = attemptModels(options.decision, options.finalFallback);
+  const models = attemptModels(options.decision, options.finalFallback, options.disableModelFallback);
   for (let attemptIndex = 0; attemptIndex < models.length; attemptIndex++) {
     const model = models[attemptIndex];
     const body = bodyForAttempt(options.decision, model);
