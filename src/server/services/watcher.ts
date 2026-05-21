@@ -34,6 +34,13 @@ function restoreNewDailyWindows(db: Database.Database, keys: ReturnType<typeof r
     if (!key || !policy) continue;
     if (policy.reset_policy !== 'daily') continue;
     if (policy.window_start === row.disabled_for_window_start) continue;
+
+    const expired = !!policy.expires_at && policy.expires_at <= new Date().toISOString();
+    if (expired) {
+      writeAudit(db, row.key_id, 'auto.enable.skip', `Daily window reset but key is expired (${policy.expires_at}); keeping disabled (${row.disabled_for_window_start} → ${policy.window_start})`);
+      continue;
+    }
+
     if (key.isActive === false) {
       const result = atomicEnableApiKey(row.key_id, options.baseDir);
       writeAudit(db, row.key_id, 'auto.enable', `Daily window reset; re-enabled key after quota lockout (${row.disabled_for_window_start} → ${policy.window_start})`);
