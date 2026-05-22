@@ -201,7 +201,7 @@ describe('fetchUpstreamWithFailover', () => {
     result.lease.release();
   });
 
-  it('uses final fallback for upstream 401', async () => {
+  it.each([401, 413])('uses final fallback for upstream %s', async (status) => {
     const calls: string[] = [];
     const limit = limiter();
     const result = await fetchUpstreamWithFailover({
@@ -215,13 +215,13 @@ describe('fetchUpstreamWithFailover', () => {
       trafficLimiter: limit.trafficLimiter,
       fetchImpl: async (_url, init) => {
         calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
-        return new Response('{}', { status: 401 });
+        return new Response('{}', { status });
       },
     });
 
     expect(calls).toEqual(['v1', 'stable']);
     expect(result.model).toBe('stable');
-    expect(result.upstream.status).toBe(401);
+    expect(result.upstream.status).toBe(status);
     result.lease.release();
   });
 
