@@ -53,7 +53,7 @@ export type FetchUpstreamOptions = {
 };
 
 export function isRetryableUpstreamStatus(status: number): boolean {
-  return status === 401 || status === 429 || status >= 500;
+  return status === 401 || status === 413 || status === 429 || status >= 500;
 }
 
 function appendFallback(models: string[], decision: RewriteDecision | undefined, finalFallback: FinalFallbackConfig | undefined): string[] {

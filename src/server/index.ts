@@ -26,6 +26,7 @@ import { buildImageProxyUrl, getImageProxyConfig, isImageProxyPath, maybeRewrite
 import { enhanceImagePrompt } from './services/publicImage.js';
 import { imageProxyNeedsServerKey } from '../shared/imageProxy.js';
 import { buildQuotaErrorBody, evaluateQuotaInterceptor } from './services/quotaInterceptor.js';
+import { buildKeyExpiredErrorBody, evaluateKeyAccessInterceptor } from './services/keyAccessInterceptor.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 3039);
@@ -357,13 +358,24 @@ app.register(async proxyRoutes => {
       ? (Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body == null ? '' : typeof req.body === 'string' ? req.body : JSON.stringify(req.body)))
       : undefined;
 
+    const lookupKey = (token: string) => {
+      const match = ensurePolicies().find(k => k.key === token.trim());
+      return match ? { id: match.id, isActive: match.isActive } : undefined;
+    };
+    const keyAccess = evaluateKeyAccessInterceptor({
+      db,
+      authHeader: req.headers.authorization,
+      lookupKey,
+    });
+    if (keyAccess.blocked) {
+      req.log.info({ keyId: keyAccess.keyId, expiresAt: keyAccess.expiresAt }, 'expired key intercept');
+      return reply.code(keyAccess.status).send(buildKeyExpiredErrorBody(keyAccess));
+    }
+
     const quota = evaluateQuotaInterceptor({
       db,
       authHeader: req.headers.authorization,
-      lookupKey: token => {
-        const match = ensurePolicies().find(k => k.key === token.trim());
-        return match ? { id: match.id } : undefined;
-      },
+      lookupKey,
     });
     if (quota.blocked) {
       req.log.info({ keyId: quota.keyId, retryAfter: quota.retryAfterSeconds, resetAt: quota.resetAt, reason: quota.reason }, 'quota intercept');

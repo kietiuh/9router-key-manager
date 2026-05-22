@@ -31,15 +31,15 @@ export function extractBearerToken(authHeader: string | string[] | undefined): s
 
 export type ApiKeyLookup = (token: string) => { id: string } | undefined;
 
-export function readAutoDisableSnapshot(db: Database.Database, keyId: string): AutoDisableSnapshot | null {
+export function readAutoDisableSnapshot(db: Database.Database, keyId: string, now = new Date()): AutoDisableSnapshot | null {
   const row = db.prepare('SELECT key_id, reason, disabled_for_window_start FROM auto_disabled_keys WHERE key_id = ? ORDER BY disabled_for_window_start DESC LIMIT 1').get(keyId) as
     | { key_id: string; reason: string | null; disabled_for_window_start: string }
     | undefined;
   if (!row) return null;
   const policy = db.prepare('SELECT reset_policy FROM key_policies WHERE key_id = ?').get(keyId) as { reset_policy?: string | null } | undefined;
   const resetPolicy = (policy?.reset_policy ?? 'daily') as string;
-  const resetAt = resetPolicy === 'daily' ? endOfVietnamDayUtc()
-    : resetPolicy === 'monthly' ? endOfVietnamMonthUtc()
+  const resetAt = resetPolicy === 'daily' ? endOfVietnamDayUtc(now)
+    : resetPolicy === 'monthly' ? endOfVietnamMonthUtc(now)
     : null;
   return { keyId: row.key_id, reason: row.reason ?? 'quota exceeded', disabledForWindowStart: row.disabled_for_window_start, resetAt };
 }
@@ -60,7 +60,7 @@ export function evaluateQuotaInterceptor(opts: {
   if (!token) return { blocked: false };
   const key = opts.lookupKey(token);
   if (!key) return { blocked: false };
-  const snap = readAutoDisableSnapshot(opts.db, key.id);
+  const snap = readAutoDisableSnapshot(opts.db, key.id, opts.now);
   if (!snap) return { blocked: false };
   const retryAfterSeconds = computeRetryAfterSeconds(snap.resetAt, opts.now);
   return {
