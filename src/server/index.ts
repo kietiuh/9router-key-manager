@@ -26,6 +26,7 @@ import { enhanceImagePrompt } from './services/publicImage.js';
 import { imageProxyNeedsServerKey } from '../shared/imageProxy.js';
 import { buildQuotaErrorBody, evaluateQuotaInterceptor } from './services/quotaInterceptor.js';
 import { buildKeyExpiredErrorBody, evaluateKeyAccessInterceptor } from './services/keyAccessInterceptor.js';
+import { maybeUnlockQuotaLockout } from './services/quotaUnlock.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 3039);
@@ -121,6 +122,21 @@ function usageResponse() {
   return data;
 }
 function mutationOk(keyId: string) { return { ok: true, keyId }; }
+function maybeUnlockQuotaAfterPolicyChange(keyId: string) {
+  const locked = db.prepare('SELECT 1 FROM auto_disabled_keys WHERE key_id = ?').get(keyId);
+  if (!locked) return;
+  refreshUsageStore(true);
+  const keys = ensurePolicies();
+  const key = keys.find(k => k.id === keyId);
+  if (!key) return;
+  const policies = resolvedPolicies();
+  const policy = policies.find(p => p.key_id === keyId);
+  const usage = readStoredUsageForKeys(db, [{ apiKey: key.key, sinceIso: policy?.window_start }]);
+  const summary = summarizeKeyUsage([key], usage, policy ? [policy] : []).at(0);
+  if (!summary) return;
+  const unlock = maybeUnlockQuotaLockout(db, summary, { hardDisable: process.env.HARD_DISABLE === 'true' });
+  if (unlock.unlocked) app.log.info({ keyId, enableChanged: unlock.enableResult?.changed ?? false }, 'quota lockout cleared after policy update');
+}
 
 function vietnamDayString(date = new Date()) { return new Date(date.getTime()+7*60*60*1000).toISOString().slice(0,10); }
 function dailyImageUsageForKey(keyId: string) { const today = vietnamDayString(); const row = db.prepare("SELECT COALESCE(SUM(image_count),0) images FROM image_usage_events WHERE key_id = ? AND kind = 'public-page' AND status = 'success' AND date(datetime(created_at, '+7 hours')) = ?").get(keyId, today) as any; return Number(row?.images || 0); }
@@ -546,7 +562,41 @@ app.register(async protectedRoutes => {
   protectedRoutes.put('/api/final-fallback/config', async (req) => finalFallbackStore.save(FinalFallbackConfigBody.parse(req.body)));
   protectedRoutes.get('/api/image-proxy/config', async () => getImageProxyConfig(db));
   protectedRoutes.put('/api/image-proxy/config', async (req) => saveImageProxyConfig(db, ImageProxyConfigBody.parse(req.body)));
-  protectedRoutes.patch('/api/keys/:keyId/policy', async (req) => { const { keyId } = req.params as { keyId: string }; ensurePolicies(); const body = PolicyPatch.parse(req.body); const current = db.prepare('SELECT * FROM key_policies WHERE key_id = ?').get(keyId) as any; if (!current) { const err = new Error('key policy not found') as Error & { statusCode?: number }; err.statusCode = 404; throw err; } const currentMultiplier = Number(current.usage_multiplier ?? 1); const nextMultiplier = body.usageMultiplier === undefined ? currentMultiplier : body.usageMultiplier; const multiplierChanged = body.usageMultiplier !== undefined && nextMultiplier !== currentMultiplier; const effectiveAt = multiplierChanged ? new Date().toISOString() : current.usage_multiplier_effective_at; db.transaction(() => { db.prepare(`UPDATE key_policies SET token_limit = ?, image_daily_limit = ?, window_start = ?, window_end = ?, expires_at = ?, reset_policy = ?, action_on_limit = ?, notes = ?, usage_multiplier = ?, usage_multiplier_effective_at = ?, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?`).run(body.tokenLimit === undefined ? current.token_limit : body.tokenLimit, body.imageDailyLimit === undefined ? current.image_daily_limit : body.imageDailyLimit, body.windowStart ?? current.window_start, body.windowEnd === undefined ? current.window_end : body.windowEnd, body.expiresAt === undefined ? current.expires_at : body.expiresAt, body.resetPolicy ?? current.reset_policy, body.actionOnLimit ?? current.action_on_limit, body.notes === undefined ? current.notes : body.notes, nextMultiplier, effectiveAt, keyId); if (multiplierChanged) db.prepare('INSERT INTO usage_multiplier_events (key_id, multiplier, effective_at) VALUES (?, ?, ?)').run(keyId, nextMultiplier, effectiveAt); })(); db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'policy.update', JSON.stringify(body)); invalidateUsageSummaryCache(); return mutationOk(keyId); });
+  protectedRoutes.patch('/api/keys/:keyId/policy', async (req) => {
+    const { keyId } = req.params as { keyId: string };
+    ensurePolicies();
+    const body = PolicyPatch.parse(req.body);
+    const current = db.prepare('SELECT * FROM key_policies WHERE key_id = ?').get(keyId) as any;
+    if (!current) {
+      const err = new Error('key policy not found') as Error & { statusCode?: number };
+      err.statusCode = 404;
+      throw err;
+    }
+    const currentMultiplier = Number(current.usage_multiplier ?? 1);
+    const nextMultiplier = body.usageMultiplier === undefined ? currentMultiplier : body.usageMultiplier;
+    const multiplierChanged = body.usageMultiplier !== undefined && nextMultiplier !== currentMultiplier;
+    const effectiveAt = multiplierChanged ? new Date().toISOString() : current.usage_multiplier_effective_at;
+    db.transaction(() => {
+      db.prepare(`UPDATE key_policies SET token_limit = ?, image_daily_limit = ?, window_start = ?, window_end = ?, expires_at = ?, reset_policy = ?, action_on_limit = ?, notes = ?, usage_multiplier = ?, usage_multiplier_effective_at = ?, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?`).run(
+        body.tokenLimit === undefined ? current.token_limit : body.tokenLimit,
+        body.imageDailyLimit === undefined ? current.image_daily_limit : body.imageDailyLimit,
+        body.windowStart ?? current.window_start,
+        body.windowEnd === undefined ? current.window_end : body.windowEnd,
+        body.expiresAt === undefined ? current.expires_at : body.expiresAt,
+        body.resetPolicy ?? current.reset_policy,
+        body.actionOnLimit ?? current.action_on_limit,
+        body.notes === undefined ? current.notes : body.notes,
+        nextMultiplier,
+        effectiveAt,
+        keyId,
+      );
+      if (multiplierChanged) db.prepare('INSERT INTO usage_multiplier_events (key_id, multiplier, effective_at) VALUES (?, ?, ?)').run(keyId, nextMultiplier, effectiveAt);
+    })();
+    db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'policy.update', JSON.stringify(body));
+    maybeUnlockQuotaAfterPolicyChange(keyId);
+    invalidateUsageSummaryCache();
+    return mutationOk(keyId);
+  });
   protectedRoutes.post('/api/keys/:keyId/reset-window', async (req, reply) => { const { keyId } = req.params as { keyId: string }; const current = db.prepare('SELECT reset_policy FROM key_policies WHERE key_id = ?').get(keyId) as any; if (!current) return reply.code(404).send({ error: 'key policy not found' }); if (current.reset_policy === 'daily' || current.reset_policy === 'monthly') return reply.code(409).send({ error: `reset-window is only available for manual/custom policies; ${current.reset_policy} windows reset automatically` }); const windowStart = new Date().toISOString(); db.prepare('UPDATE key_policies SET window_start = ?, window_end = NULL, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?').run(windowStart, keyId); db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'window.reset', windowStart); invalidateUsageSummaryCache(); return mutationOk(keyId); });
   protectedRoutes.post('/api/watcher/run', async () => runWatcherOnce(db, { hardDisable: process.env.HARD_DISABLE === 'true' }));
   protectedRoutes.get('/api/audit', async () => db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT 200').all());
