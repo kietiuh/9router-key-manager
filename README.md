@@ -38,6 +38,24 @@ npm test
 npm run build
 ```
 
+## Operations runbooks
+
+- Public 9router lag mitigation and VPS rebuild steps: [`docs/ops/9router-public-lag-mitigation.md`](docs/ops/9router-public-lag-mitigation.md).
+
+Run the 9router observability mitigation in dry-run mode:
+
+```bash
+npm run ops:mitigate-9router-observability
+```
+
+Apply it during an approved production window:
+
+```bash
+npm run ops:mitigate-9router-observability -- --apply
+```
+
+When production routing, service paths, ports, 9router versions, or mitigation settings change, update the matching runbook in the same commit.
+
 ## Config
 
 Copy `.env.example` to `.env` if you need overrides.
