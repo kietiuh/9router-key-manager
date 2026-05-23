@@ -5,7 +5,6 @@ import fastifyStatic from '@fastify/static';
 import cookie from '@fastify/cookie';
 import path from 'node:path';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { openDb } from './db/index.js';
 import fs from 'node:fs';
@@ -47,7 +46,6 @@ const finalFallbackStore = createFinalFallbackStore(db);
 await app.register(cors, { origin: (origin, cb) => cb(null, !origin || allowedOrigins.has(origin)), credentials: true });
 await app.register(cookie, { secret: sessionSecret });
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = process.env.WEB_ROOT ?? path.resolve(process.cwd(), 'dist/web');
 if (fs.existsSync(webRoot)) await app.register(fastifyStatic, { root: webRoot, prefix: '/' });
 
@@ -170,7 +168,10 @@ function lastDisableAuditMessage(keyId: string): string | null {
   const row = db.prepare("SELECT message FROM audit_log WHERE key_id = ? AND action IN ('disable','auto.disable') ORDER BY id DESC LIMIT 1").get(keyId) as { message?: string } | undefined;
   return row?.message ?? null;
 }
-function sanitizeImagePrompt(prompt: string) { return prompt.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 6000); }
+function sanitizeImagePrompt(prompt: string) {
+  // eslint-disable-next-line no-control-regex
+  return prompt.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 6000);
+}
 function guardImagePrompt(prompt: string) {
   const text = sanitizeImagePrompt(prompt);
   const lower = text.toLowerCase();

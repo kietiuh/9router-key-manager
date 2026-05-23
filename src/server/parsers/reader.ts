@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
 import type { ApiKeyRecord, UsageRecord } from '../../shared/types.js';

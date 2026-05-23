@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { fetchUpstreamWithFailover, TrafficAcquireError } from './proxyFailover.js';
 import type { RewriteDecision } from './modelRewriteProxy.js';
 

@@ -19,7 +19,7 @@ export type QuotaInterceptResult = {
   blocked: false;
 };
 
-const TOKEN_RE = /Bearer\s+([A-Za-z0-9._\-:+\/=]+)/i;
+const TOKEN_RE = /Bearer\s+([A-Za-z0-9._:+/=-]+)/i;
 
 export function extractBearerToken(authHeader: string | string[] | undefined): string | null {
   if (!authHeader) return null;

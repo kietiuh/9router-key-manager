@@ -24,18 +24,21 @@
     "zod": "latest"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
     "eslint": "latest",
+    "globals": "^17.6.0",
     "npm-run-all": "latest",
     "prettier": "latest",
     "react": "latest",
     "react-dom": "latest",
     "tsx": "latest",
     "typescript": "latest",
+    "typescript-eslint": "^8.59.4",
     "vite": "latest",
     "vitest": "latest"
   }
