@@ -12,6 +12,8 @@ import { AdminTabBar } from './AdminTabBar';
 import type { Audit } from './adminTypes';
 import { DEFAULT_ADMIN_TAB, getAdminTabCounts, isKeyAttention, type AdminTab } from './adminTabs';
 
+const ADMIN_AUTO_REFRESH_MS = 60_000;
+
 export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l: Lang) => void; onLogout: () => void }) {
   const t = dict[lang];
   const [keys, setKeys] = useState<KeyUsageSummary[]>([]);
@@ -44,7 +46,13 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
     }
   }
 
-  useEffect(() => { refresh(); const id = setInterval(refresh, 15000); return () => clearInterval(id); }, []);
+  useEffect(() => {
+    refresh();
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') refresh();
+    }, ADMIN_AUTO_REFRESH_MS);
+    return () => clearInterval(id);
+  }, []);
 
   const totals = useMemo(() => keys.reduce((a, k) => ({ total: a.total + k.total, req: a.req + k.req, active: a.active + (k.isActive ? 1 : 0), attention: a.attention + (isKeyAttention(k) ? 1 : 0), cost: a.cost + k.cost }), { total: 0, req: 0, active: 0, attention: 0, cost: 0 }), [keys]);
   const tabCounts = useMemo(() => getAdminTabCounts(keys, imageUsage), [keys, imageUsage]);

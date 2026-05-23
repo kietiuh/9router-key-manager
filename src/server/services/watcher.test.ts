@@ -16,6 +16,35 @@ function fixture() {
   return { dir, db };
 }
 
+function writeUsageSqlite(baseDir: string, rows: Array<{ timestamp: string; apiKey: string; total: number }>) {
+  const dbDir = path.join(baseDir, 'db');
+  fs.mkdirSync(dbDir, { recursive: true });
+  const source = new Database(path.join(dbDir, 'data.sqlite'));
+  try {
+    source.exec(`
+      CREATE TABLE usageHistory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        provider TEXT,
+        model TEXT,
+        connectionId TEXT,
+        apiKey TEXT,
+        endpoint TEXT,
+        promptTokens INTEGER,
+        completionTokens INTEGER,
+        cost REAL,
+        status TEXT,
+        tokens TEXT,
+        meta TEXT
+      )
+    `);
+    const insert = source.prepare('INSERT INTO usageHistory (timestamp, apiKey, model, tokens) VALUES (?, ?, ?, ?)');
+    for (const row of rows) insert.run(row.timestamp, row.apiKey, 'm', JSON.stringify({ total_tokens: row.total }));
+  } finally {
+    source.close();
+  }
+}
+
 describe('runWatcherOnce', () => {
   it('can hard-disable a key that exceeds quota', () => {
     const { dir, db } = fixture();
@@ -66,5 +95,30 @@ describe('runWatcherOnce', () => {
     expect(out.events).toHaveLength(1);
     const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
     expect(after.apiKeys[0].isActive).toBe(false);
+  });
+
+  it('imports watcher usage incrementally from the latest stored event', () => {
+    const { dir, db } = fixture();
+    fs.unlinkSync(path.join(dir, 'usage.json'));
+    db.prepare('UPDATE key_policies SET token_limit = ? WHERE key_id = ?').run(1000, 'a');
+    writeUsageSqlite(dir, [
+      { apiKey: 'sk-a', timestamp: '2026-01-02T01:00:00.000Z', total: 10 },
+      { apiKey: 'sk-a', timestamp: '2026-01-02T02:01:00.000Z', total: 30 },
+    ]);
+    db.prepare(`INSERT INTO usage_events (
+      signature, api_key, model, timestamp, total_tokens, raw_json
+    ) VALUES (?, ?, ?, ?, ?, ?)`).run(
+      'existing',
+      'sk-a',
+      'm',
+      '2026-01-02T02:00:00.000Z',
+      20,
+      JSON.stringify({ apiKey: 'sk-a', model: 'm', timestamp: '2026-01-02T02:00:00.000Z', tokens: { total_tokens: 20 } })
+    );
+
+    const out = runWatcherOnce(db, { baseDir: dir, hardDisable: true });
+
+    expect(db.prepare('SELECT COUNT(*) as n FROM usage_events').get()).toMatchObject({ n: 2 });
+    expect(out.summaries[0].total).toBe(50);
   });
 });

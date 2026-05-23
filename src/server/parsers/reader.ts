@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
 import type { ApiKeyRecord, UsageRecord } from '../../shared/types.js';
@@ -70,12 +69,14 @@ function parseTokens(raw: unknown, promptTokens?: number, completionTokens?: num
   };
 }
 
-function readSqliteUsageHistory(pathname: string): UsageRecord[] | null {
+function readSqliteUsageHistory(pathname: string, sinceIso?: string): UsageRecord[] | null {
   if (!fileExists(pathname)) return null;
   try {
     const db = new Database(pathname, { readonly: true, fileMustExist: true });
     try {
-      const rows = db.prepare(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta FROM usageHistory ORDER BY timestamp ASC, id ASC`).all() as any[];
+      const where = sinceIso ? 'WHERE timestamp >= ?' : '';
+      const stmt = db.prepare(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta FROM usageHistory ${where} ORDER BY timestamp ASC, id ASC`);
+      const rows = (sinceIso ? stmt.all(sinceIso) : stmt.all()) as any[];
       return rows.map(row => UsageRecordSchema.parse({
         apiKey: row.apiKey ?? undefined,
         model: row.model ?? undefined,
@@ -101,6 +102,13 @@ export function readUsageHistory(baseDir?: string): UsageRecord[] {
   const sqliteRows = readSqliteUsageHistory(dataSqlitePath(baseDir));
   if (sqliteRows) return sqliteRows;
   return UsageSchema.parse(readJson(usageJsonPath(baseDir))).history;
+}
+
+export function readUsageHistorySince(sinceIso?: string, baseDir?: string): UsageRecord[] {
+  const sqliteRows = readSqliteUsageHistory(dataSqlitePath(baseDir), sinceIso);
+  if (sqliteRows) return sqliteRows;
+  const rows = UsageSchema.parse(readJson(usageJsonPath(baseDir))).history;
+  return sinceIso ? rows.filter(row => row.timestamp >= sinceIso) : rows;
 }
 
 export function usageSourceStatus(baseDir?: string) {
