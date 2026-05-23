@@ -50,6 +50,13 @@ function tokenTotal(r: UsageRecord): number {
 
 export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], policies: Policy[], nowIso = new Date().toISOString()): KeyUsageSummary[] {
   const policyById = new Map(policies.map(p => [p.key_id, p]));
+  const usageByApiKey = new Map<string, UsageRecord[]>();
+  for (const r of usage) {
+    if (!r.apiKey) continue;
+    const rows = usageByApiKey.get(r.apiKey) ?? [];
+    rows.push(r);
+    usageByApiKey.set(r.apiKey, rows);
+  }
   return keys.map(key => {
     const p = policyById.get(key.id);
     const windowStart = p?.window_start ?? '1970-01-01T00:00:00.000Z';
@@ -61,8 +68,7 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
     const multiplierEvents = (p?.usage_multiplier_events?.length ? p.usage_multiplier_events : (multiplierEffectiveAt ? [{ multiplier, effective_at: multiplierEffectiveAt }] : [])).filter(e => e.effective_at).sort((a, b) => a.effective_at.localeCompare(b.effective_at));
     const deduped = new Map<string, UsageRecord>();
     let duplicateRequests = 0, duplicateTokens = 0;
-    for (const r of usage) {
-      if (r.apiKey !== key.key) continue;
+    for (const r of usageByApiKey.get(key.key) ?? []) {
       if (r.timestamp < windowStart) continue;
       if (windowEnd && r.timestamp >= windowEnd) continue;
       const sig = dedupeSignature(r);
