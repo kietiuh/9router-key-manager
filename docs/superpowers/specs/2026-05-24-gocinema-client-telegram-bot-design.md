@@ -71,6 +71,8 @@ Slash commands:
 
 The menu is module-oriented: quota, key, alerts, history, settings, and help are independent handlers. Future modules can be added by registering a new menu item and command handler without changing existing quota flows.
 
+Quota and alert replies should be written for end users, not operators: hide raw status codes and backend reasons like `ok` or `Healthy`, use Vietnamese labels such as `Đang hoạt động` or `Sắp hết quota`, and display times in compact Vietnam time (`HH:mm dd/MM/yyyy`). If `/start` is used by a user who already saved a key, show quota immediately. Unknown free-form text should receive a short fallback that points back to the menu or `/help`.
+
 ## Data Model
 
 New tables live in the manager SQLite database:

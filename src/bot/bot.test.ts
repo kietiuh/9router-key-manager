@@ -90,6 +90,16 @@ describe('GoCinemaAssistantBot', () => {
     expect(telegram.messages.at(-1)?.options?.reply_markup).toMatchObject({ resize_keyboard: true });
   });
 
+  it('shows quota immediately on start when the user already saved a key', async () => {
+    const { app, db, telegram, api } = makeApp();
+    db.saveUserKey({ id: 123, username: 'alice' }, 99, 'sk-secret', 'sk-s...cret');
+
+    await app.handleUpdate(message('/start'));
+
+    expect(api.calls).toEqual(['sk-secret']);
+    expect(telegram.messages.at(-1)?.text).toContain('📊 Quota của bạn');
+  });
+
   it('guides users without a saved key to key_change', async () => {
     const { app, telegram } = makeApp();
 
@@ -107,7 +117,7 @@ describe('GoCinemaAssistantBot', () => {
     expect(api.calls).toEqual(['sk-secret']);
     expect(db.getUser(123)).toMatchObject({ apiKey: 'sk-secret', keyMasked: 'sk-a...test' });
     expect(db.getUserState(123)).toBeNull();
-    expect(telegram.messages.at(-1)?.text).toContain('📊 Quota GoCinema');
+    expect(telegram.messages.at(-1)?.text).toContain('📊 Quota của bạn');
   });
 
   it('checks quota for the saved key and logs history', async () => {
@@ -118,7 +128,7 @@ describe('GoCinemaAssistantBot', () => {
     await app.handleUpdate(message('/history'));
 
     expect(api.calls).toEqual(['sk-secret']);
-    expect(telegram.messages.at(-2)?.text).toContain('120 / 1.000 tokens');
+    expect(telegram.messages.at(-2)?.text).toContain('120 / 1.000 token');
     expect(telegram.messages.at(-1)?.text).toContain('📜 Lịch sử gần đây');
     expect(telegram.messages.at(-1)?.text).toContain('sk-a...test');
   });
@@ -145,7 +155,16 @@ describe('GoCinemaAssistantBot', () => {
     await app.handleUpdate(message('/settings'));
 
     expect(db.getSettings(123)).toMatchObject({ alertsEnabled: true, alertThresholdPercent: 15 });
-    expect(telegram.messages.at(-1)?.text).toContain('đang bật');
+    expect(telegram.messages.at(-1)?.text).toContain('Cảnh báo quota: đang bật');
     expect(telegram.messages.at(-1)?.text).toContain('15%');
+  });
+
+  it('keeps unknown free-form text concise when no conversation is pending', async () => {
+    const { app, telegram } = makeApp();
+
+    await app.handleUpdate(message('xin chào'));
+
+    expect(telegram.messages.at(-1)?.text).toContain('Mình chưa hiểu thao tác này');
+    expect(telegram.messages.at(-1)?.text).not.toContain('/threshold_custom');
   });
 });

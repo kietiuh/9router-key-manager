@@ -90,7 +90,8 @@ describe('AlertEngine', () => {
     expect(api.calls).toEqual(['sk-secret', 'sk-secret']);
     expect(telegram.messages).toHaveLength(1);
     expect(telegram.messages[0].text).toContain('Cảnh báo quota');
-    expect(telegram.messages[0].text).toContain('còn 8%');
+    expect(telegram.messages[0].text).toContain('Còn lại: 8%');
+    expect(telegram.messages[0].text).toContain('Reset lúc: 00:00 25/05/2026');
   });
 
   it('can alert again after the quota reset window changes', async () => {
