@@ -28,7 +28,7 @@ function passThroughDecision(): RewriteDecision {
   };
 }
 
-function limiter() {
+function limiter(timeoutMs = 1000) {
   const acquired: string[] = [];
   const released: string[] = [];
   return {
@@ -38,7 +38,7 @@ function limiter() {
       snapshot: () => [],
       acquire: async ({ model }: { model: string }) => {
         acquired.push(model);
-        return { queuedMs: 0, timeoutMs: 1000, release: () => released.push(model) };
+        return { queuedMs: 0, timeoutMs, release: () => released.push(model) };
       },
     },
   };
@@ -266,6 +266,57 @@ describe('fetchUpstreamWithFailover', () => {
     });
 
     expect(messages).toEqual(['model failover retry']);
+    result.lease.release();
+  });
+
+  it('logs timeout retry metadata before trying the fallback model', async () => {
+    const calls: string[] = [];
+    const logs: Array<Record<string, unknown>> = [];
+    const limit = limiter(300000);
+    const result = await fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/responses',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1']),
+      finalFallback: { enabled: true, model: 'stable' },
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      trafficLimiter: limit.trafficLimiter,
+      log: (data) => logs.push(data),
+      fetchImpl: async (_url, init) => {
+        calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+        if (calls.length === 1) throw new DOMException('This operation was aborted', 'AbortError');
+        return new Response('{}', { status: 200 });
+      },
+    });
+
+    expect(result.model).toBe('stable');
+    expect(logs[0]).toMatchObject({
+      model: 'v1',
+      errorType: 'upstream_timeout',
+      retryReason: 'request_error',
+      timeoutMs: 300000,
+      bodyBytes: Buffer.from(JSON.stringify({ model: 'v1', stream: true })).length,
+      estimatedInputTokens: 7,
+      isLargeContext: false,
+    });
+    result.lease.release();
+  });
+
+  it('returns the selected upstream timeout with successful attempts', async () => {
+    const limit = limiter(600000);
+    const result = await fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/responses',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1']),
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      trafficLimiter: limit.trafficLimiter,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+
+    expect(result.timeoutMs).toBe(600000);
     result.lease.release();
   });
 

@@ -510,7 +510,7 @@ app.register(async proxyRoutes => {
         log: (data, message) => req.log.info(data, message),
       });
       lease = result.lease;
-      req.log.info({ model: result.model, userId, bodyBytes: result.bodyBytes, estimatedInputTokens: result.estimatedInputTokens, isLargeContext: result.isLargeContext, queuedMs: result.queuedMs, upstreamMs: result.upstreamMs, totalMs: Date.now() - totalStarted, upstreamStatus: result.upstream.status, attemptIndex: result.attemptIndex, attemptCount: result.attemptCount, limiter: trafficLimiter.snapshot() }, 'traffic proxied request');
+      req.log.info({ model: result.model, userId, bodyBytes: result.bodyBytes, estimatedInputTokens: result.estimatedInputTokens, isLargeContext: result.isLargeContext, queuedMs: result.queuedMs, upstreamMs: result.upstreamMs, upstreamTimeoutMs: result.timeoutMs, totalMs: Date.now() - totalStarted, upstreamStatus: result.upstream.status, attemptIndex: result.attemptIndex, attemptCount: result.attemptCount, limiter: trafficLimiter.snapshot() }, 'traffic proxied request');
       reply.header('x-queue-time-ms', String(result.queuedMs));
       reply.header('x-upstream-time-ms', String(result.upstreamMs));
       reply.code(result.upstream.status);
