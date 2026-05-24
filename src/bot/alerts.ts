@@ -1,73 +1,41 @@
-import crypto from 'node:crypto';
 import type { KeyUsageSummary } from '../shared/types.js';
-import type { KeyChecker, TelegramSender } from './bot.js';
-import type { AlertCategory, BotDatabase } from './database.js';
+import { alertCategory, keyFingerprint } from '../shared/quotaAlerts.js';
+import type { TelegramSender } from './bot.js';
+import type { BotDatabase } from './database.js';
 import { formatLocalDateTime, formatStatusLabel, quotaMarkup } from './formatting.js';
 
-export function keyFingerprint(apiKey: string): string {
-  return crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 32);
-}
-
-export function alertCategory(summary: KeyUsageSummary, thresholdPercent: number): AlertCategory | null {
-  if (!summary.isActive || summary.status === 'inactive') return 'key_inactive';
-  if (summary.status === 'expired') return 'key_expired';
-  if (!summary.tokenLimit || summary.percentOfLimit == null) return null;
-  const remainingPercent = Math.max(0, 100 - summary.percentOfLimit);
-  if (remainingPercent <= 0 || summary.percentOfLimit >= 100) return 'token_empty';
-  if (remainingPercent <= thresholdPercent) return 'token_low';
-  return null;
-}
+export { alertCategory, keyFingerprint };
 
 export class AlertEngine {
   constructor(
     private readonly deps: {
       db: BotDatabase;
       telegram: TelegramSender;
-      api: KeyChecker;
       timezoneOffsetHours: number;
       batchLimit: number;
     },
   ) {}
 
   async runOnce(): Promise<void> {
-    const users = this.deps.db.usersWithAlertsEnabled(this.deps.batchLimit);
-    for (const user of users) {
-      if (!user.apiKey) continue;
+    const jobs = this.deps.db.pendingAlertJobs(this.deps.batchLimit);
+    for (const job of jobs) {
       try {
-        const summary = await this.deps.api.checkKey(user.apiKey);
-        this.deps.db.logQuotaCheck({
-          telegramUserId: user.telegramUserId,
-          source: 'alert',
-          success: true,
-          maskedKey: summary.keyMasked,
-          status: summary.status,
-          total: summary.total,
-          tokenLimit: summary.tokenLimit,
-          percentOfLimit: summary.percentOfLimit,
-          resetAt: summary.windowEnd ?? null,
-        });
-        const category = alertCategory(summary, user.alertThresholdPercent);
-        if (!category) continue;
-        const fingerprint = keyFingerprint(user.apiKey);
-        const resetAt = summary.windowEnd ?? null;
-        if (this.deps.db.hasSentAlert(user.telegramUserId, fingerprint, resetAt, user.alertThresholdPercent, category)) continue;
-        await this.deps.telegram.sendMessage(user.chatId, formatAlertMessage(summary, user.alertThresholdPercent, this.deps.timezoneOffsetHours), { reply_markup: quotaMarkup() });
+        if (this.deps.db.hasSentAlert(job.telegramUserId, job.keyFingerprint, job.resetAt, job.thresholdPercent, job.category)) {
+          this.deps.db.markAlertJobSent(job.id);
+          continue;
+        }
+        await this.deps.telegram.sendMessage(job.chatId, formatAlertMessage(job.summary, job.thresholdPercent, this.deps.timezoneOffsetHours), { reply_markup: quotaMarkup() });
         this.deps.db.recordAlertSent({
-          telegramUserId: user.telegramUserId,
-          maskedKey: summary.keyMasked,
-          keyFingerprint: fingerprint,
-          resetAt,
-          thresholdPercent: user.alertThresholdPercent,
-          category,
+          telegramUserId: job.telegramUserId,
+          maskedKey: job.maskedKey,
+          keyFingerprint: job.keyFingerprint,
+          resetAt: job.resetAt,
+          thresholdPercent: job.thresholdPercent,
+          category: job.category,
         });
+        this.deps.db.markAlertJobSent(job.id);
       } catch (error) {
-        this.deps.db.logQuotaCheck({
-          telegramUserId: user.telegramUserId,
-          source: 'alert',
-          success: false,
-          maskedKey: user.keyMasked,
-          error: error instanceof Error ? error.message : 'unknown error',
-        });
+        this.deps.db.markAlertJobFailed(job.id, error instanceof Error ? error.message : 'unknown error');
       }
     }
   }

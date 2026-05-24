@@ -15,7 +15,7 @@ const db = new BotDatabase(sqlite, { defaultAlertThresholdPercent: config.defaul
 const telegram = new TelegramClient({ token: config.telegramBotToken });
 const api = new KeyManagerPublicApi({ baseUrl: config.publicApiBaseUrl, timeoutMs: config.requestTimeoutMs });
 const bot = new GoCinemaAssistantBot({ db, telegram, api, timezoneOffsetHours: config.timezoneOffsetHours });
-const alerts = new AlertEngine({ db, telegram, api, timezoneOffsetHours: config.timezoneOffsetHours, batchLimit: config.alertBatchLimit });
+const alerts = new AlertEngine({ db, telegram, timezoneOffsetHours: config.timezoneOffsetHours, batchLimit: config.alertBatchLimit });
 
 let running = true;
 let nextOffset: number | undefined;

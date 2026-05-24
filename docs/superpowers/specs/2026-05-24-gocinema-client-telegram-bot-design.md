@@ -32,7 +32,7 @@ Out of scope:
 
 ## Architecture
 
-The bot runs as a separate TypeScript entrypoint in the same package. It uses Telegram Bot API long polling, stores user state in the existing key-manager SQLite database, and calls the local key-manager public API (`POST /api/public/key-check`) for quota data. This keeps quota behavior aligned with `https://user.gocinema.io.vn/check` and avoids duplicating quota policy logic in the bot.
+The bot runs as a separate TypeScript entrypoint in the same package. It uses Telegram Bot API long polling and stores user state in the existing key-manager SQLite database. Manual quota refresh calls the local key-manager public API (`POST /api/public/key-check`), while proactive quota alerts are watcher-driven: the API service computes quota summaries and enqueues Telegram alert jobs for the bot to deliver.
 
 The service can be deployed separately from the web/API service with systemd:
 

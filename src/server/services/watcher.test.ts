@@ -5,6 +5,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { migrate } from '../db/schema.js';
 import { runWatcherOnce } from './watcher.js';
+import { BotDatabase, migrateBotDatabase } from '../../bot/database.js';
 
 function fixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), '9rkm-watch-'));
@@ -95,6 +96,25 @@ describe('runWatcherOnce', () => {
     expect(out.events).toHaveLength(1);
     const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
     expect(after.apiKeys[0].isActive).toBe(false);
+  });
+
+  it('enqueues bot alert jobs from watcher-computed summaries', () => {
+    const { dir, db } = fixture();
+    migrateBotDatabase(db);
+    const botDb = new BotDatabase(db, { defaultAlertThresholdPercent: 10 });
+    botDb.saveUserKey({ id: 123, username: 'alice' }, 99, 'sk-a', 'sk-a');
+    botDb.setAlertSettings(123, true, 10);
+
+    const out = runWatcherOnce(db, { baseDir: dir, hardDisable: false });
+
+    expect(out.botAlertJobs).toBe(1);
+    const jobs = botDb.pendingAlertJobs(10);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({
+      telegramUserId: 123,
+      category: 'token_empty',
+      thresholdPercent: 10,
+    });
   });
 
   it('imports watcher usage incrementally from the latest stored event', () => {
