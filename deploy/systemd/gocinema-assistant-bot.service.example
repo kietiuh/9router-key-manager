@@ -1,0 +1,17 @@
+[Unit]
+Description=GoCinema Assistant Telegram Bot
+After=network-online.target 9router-key-manager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/9router-key-manager
+EnvironmentFile=/opt/9router-key-manager/.env
+ExecStart=/usr/bin/npm run start:bot
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

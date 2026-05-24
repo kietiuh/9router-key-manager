@@ -71,6 +71,7 @@ Important variables:
 - `COOKIE_SECURE`: override secure-cookie behavior; defaults to secure in production only.
 - `NINE_ROUTER_UPSTREAM`: 9router API base URL; production uses `http://127.0.0.1:20128`.
 - `IMAGE_PROXY_API_KEY`: server-side image upstream key for `authMode: server-key`; never expose or commit it.
+- `TELEGRAM_BOT_TOKEN`: Telegram token for GoCinema Assistant; never expose or commit it.
 
 ## Public image creator
 
@@ -107,6 +108,39 @@ Production image proxy expectations:
 ```
 
 Implementation/deploy docs: [`docs/public-image-creator.md`](docs/public-image-creator.md).
+
+## GoCinema Assistant Telegram bot
+
+This repo also contains the client Telegram bot worker for:
+
+```text
+Name: GoCinema Assistant
+Username: @gocinema_assistant_bot
+```
+
+The bot is the main client assistant surface. The first release supports key management, quota checks, quota history, opt-in quota alerts, alert thresholds, settings/help, and `/clear` to reset the current conversation state while keeping the saved key and settings.
+
+The bot runs separately from the API/web service:
+
+```bash
+npm run start:bot
+```
+
+Important bot variables:
+
+- `TELEGRAM_BOT_TOKEN`: BotFather token for `@gocinema_assistant_bot`.
+- `BOT_PUBLIC_API_BASE_URL`: local key-manager API base URL; production uses `http://127.0.0.1:3000`.
+- `BOT_ALERT_CHECK_INTERVAL_SECONDS`: background quota alert scan interval.
+- `BOT_DEFAULT_ALERT_THRESHOLD_PERCENT`: default user alert threshold; alerts are disabled until the user opts in.
+
+Slash commands registered with Telegram:
+
+```text
+/start /quota /check /refresh /key /key_change /alerts_on /alerts_off
+/threshold_20 /threshold_10 /threshold_5 /threshold_custom /history /clear /settings /cancel /help
+```
+
+Deploy scaffold: [`deploy/systemd/gocinema-assistant-bot.service.example`](deploy/systemd/gocinema-assistant-bot.service.example).
 
 ## Concepts
 
