@@ -29,7 +29,7 @@ function setup() {
   const db = new BotDatabase(sqlite, { defaultAlertThresholdPercent: 10 });
   const telegram = new FakeTelegram();
   const api = new FakeApi();
-  const engine = new AlertEngine({ db, telegram, api, timezoneOffsetHours: 7, batchLimit: 50 });
+  const engine = new AlertEngine({ db, telegram, timezoneOffsetHours: 7, batchLimit: 50 });
   db.saveUserKey({ id: 123, username: 'alice' }, 99, 'sk-secret', 'sk-s...cret');
   return { db, telegram, api, engine };
 }
@@ -71,7 +71,7 @@ function summaryWithUsage(percentOfLimit: number, windowEnd: string): KeyUsageSu
 }
 
 describe('AlertEngine', () => {
-  it('does not check or notify users who did not opt in', async () => {
+  it('does not check public API or notify when no alert jobs are pending', async () => {
     const { api, telegram, engine } = setup();
 
     await engine.runOnce();
@@ -80,28 +80,52 @@ describe('AlertEngine', () => {
     expect(telegram.messages).toEqual([]);
   });
 
-  it('sends one alert when remaining quota is at or below threshold', async () => {
+  it('delivers one pending alert job and records duplicate prevention', async () => {
     const { db, api, telegram, engine } = setup();
-    db.setAlertSettings(123, true, 10);
+    const summary = summaryWithUsage(92, '2026-05-24T17:00:00.000Z');
+    db.enqueueAlertJob({
+      telegramUserId: 123,
+      chatId: 99,
+      maskedKey: summary.keyMasked,
+      keyFingerprint: keyFingerprint('sk-secret'),
+      resetAt: summary.windowEnd ?? null,
+      thresholdPercent: 10,
+      category: 'token_low',
+      summary,
+    });
 
     await engine.runOnce();
     await engine.runOnce();
 
-    expect(api.calls).toEqual(['sk-secret', 'sk-secret']);
+    expect(api.calls).toEqual([]);
     expect(telegram.messages).toHaveLength(1);
     expect(telegram.messages[0].text).toContain('Cảnh báo quota');
     expect(telegram.messages[0].text).toContain('Còn lại: 8%');
     expect(telegram.messages[0].text).toContain('Reset lúc: 00:00 25/05/2026');
+    expect(db.pendingAlertJobs(10)).toEqual([]);
   });
 
-  it('can alert again after the quota reset window changes', async () => {
+  it('can deliver again after the quota reset window changes', async () => {
     const { db, api, telegram, engine } = setup();
-    db.setAlertSettings(123, true, 10);
+    for (const summary of [
+      summaryWithUsage(92, '2026-05-24T17:00:00.000Z'),
+      summaryWithUsage(93, '2026-05-25T17:00:00.000Z'),
+    ]) {
+      db.enqueueAlertJob({
+        telegramUserId: 123,
+        chatId: 99,
+        maskedKey: summary.keyMasked,
+        keyFingerprint: keyFingerprint('sk-secret'),
+        resetAt: summary.windowEnd ?? null,
+        thresholdPercent: 10,
+        category: 'token_low',
+        summary,
+      });
+    }
 
     await engine.runOnce();
-    api.summary = summaryWithUsage(93, '2026-05-25T17:00:00.000Z');
-    await engine.runOnce();
 
+    expect(api.calls).toEqual([]);
     expect(telegram.messages).toHaveLength(2);
   });
 

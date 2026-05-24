@@ -41,6 +41,25 @@ export function migrate(db: Database.Database): void {
       last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (key_id, action, fingerprint)
     );
+    CREATE TABLE IF NOT EXISTS bot_alert_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      telegram_user_id INTEGER NOT NULL,
+      chat_id INTEGER NOT NULL,
+      masked_key TEXT NOT NULL,
+      key_fingerprint TEXT NOT NULL,
+      reset_at TEXT NOT NULL,
+      threshold_percent INTEGER NOT NULL,
+      category TEXT NOT NULL,
+      summary_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      sent_at TEXT,
+      UNIQUE (telegram_user_id, key_fingerprint, reset_at, threshold_percent, category)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bot_alert_jobs_pending ON bot_alert_jobs (status, id);
     CREATE TABLE IF NOT EXISTS auto_disabled_keys (
       key_id TEXT PRIMARY KEY,
       disabled_for_window_start TEXT NOT NULL,

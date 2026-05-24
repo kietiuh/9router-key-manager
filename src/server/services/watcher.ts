@@ -5,6 +5,7 @@ import { ingestUsageHistory, latestStoredUsageTimestamp, readStoredUsageForKeys 
 import { evaluateLimits, shouldEmitAlert, writeAudit } from './policies.js';
 import { atomicDisableApiKey, atomicEnableApiKey } from './atomic9router.js';
 import { resolveWindow } from '../utils/time.js';
+import { enqueueBotQuotaAlertJobs } from './botAlertQueue.js';
 
 export type WatcherOptions = { baseDir?: string; hardDisable?: boolean };
 
@@ -73,6 +74,7 @@ export function runWatcherOnce(db: Database.Database, options: WatcherOptions = 
   const restored = restoreNewDailyWindows(db, keys, policies, options);
   const keysAfterRestore = restored.length ? readApiKeys(options.baseDir) : keys;
   const summaries = summarizeKeyUsage(keysAfterRestore, usage, policies);
+  const botAlertJobs = enqueueBotQuotaAlertJobs(db, summaries, keysAfterRestore);
   const events = evaluateLimits(summaries);
   const actions: any[] = [...restored];
   for (const event of events) {
@@ -89,7 +91,7 @@ export function runWatcherOnce(db: Database.Database, options: WatcherOptions = 
       actions.push(event);
     }
   }
-  return { summaries, events, actions };
+  return { summaries, events, actions, botAlertJobs };
 }
 
 export function startWatcher(db: Database.Database, intervalMs = Number(process.env.WATCH_INTERVAL_MS ?? 60_000), options: WatcherOptions = {}) {

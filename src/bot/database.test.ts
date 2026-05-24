@@ -16,6 +16,7 @@ describe('bot database', () => {
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'bot_%' ORDER BY name").all() as Array<{ name: string }>;
     expect(tables.map(row => row.name)).toEqual([
+      'bot_alert_jobs',
       'bot_quota_alerts',
       'bot_quota_checks',
       'bot_user_settings',

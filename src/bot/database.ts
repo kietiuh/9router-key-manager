@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { KeyUsageSummary } from '../shared/types.js';
 
 export type BotUserIdentity = {
   id: number;
@@ -42,6 +43,20 @@ export type AlertUser = BotUser & BotSettings;
 
 export type AlertCategory = 'token_low' | 'token_empty' | 'key_inactive' | 'key_expired';
 
+export type BotAlertJob = {
+  id: number;
+  telegramUserId: number;
+  chatId: number;
+  maskedKey: string;
+  keyFingerprint: string;
+  resetAt: string | null;
+  thresholdPercent: number;
+  category: AlertCategory;
+  summary: KeyUsageSummary;
+  attempts: number;
+  createdAt: string;
+};
+
 export function migrateBotDatabase(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS bot_users (
@@ -55,6 +70,7 @@ export function migrateBotDatabase(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE INDEX IF NOT EXISTS idx_bot_users_api_key ON bot_users (api_key);
     CREATE TABLE IF NOT EXISTS bot_user_settings (
       telegram_user_id INTEGER PRIMARY KEY,
       alerts_enabled INTEGER NOT NULL DEFAULT 0,
@@ -62,6 +78,7 @@ export function migrateBotDatabase(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE INDEX IF NOT EXISTS idx_bot_user_settings_alerts ON bot_user_settings (alerts_enabled, telegram_user_id);
     CREATE TABLE IF NOT EXISTS bot_user_states (
       telegram_user_id INTEGER PRIMARY KEY,
       state TEXT NOT NULL,
@@ -93,6 +110,25 @@ export function migrateBotDatabase(db: Database.Database): void {
       sent_at TEXT NOT NULL,
       UNIQUE (telegram_user_id, key_fingerprint, reset_at, threshold_percent, category)
     );
+    CREATE TABLE IF NOT EXISTS bot_alert_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      telegram_user_id INTEGER NOT NULL,
+      chat_id INTEGER NOT NULL,
+      masked_key TEXT NOT NULL,
+      key_fingerprint TEXT NOT NULL,
+      reset_at TEXT NOT NULL,
+      threshold_percent INTEGER NOT NULL,
+      category TEXT NOT NULL,
+      summary_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      sent_at TEXT,
+      UNIQUE (telegram_user_id, key_fingerprint, reset_at, threshold_percent, category)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bot_alert_jobs_pending ON bot_alert_jobs (status, id);
   `);
 }
 
@@ -247,6 +283,62 @@ export class BotDatabase {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(args.telegramUserId, args.maskedKey, args.keyFingerprint, args.resetAt ?? '', args.thresholdPercent, args.category, args.sentAt ?? new Date().toISOString());
   }
+
+  enqueueAlertJob(args: {
+    telegramUserId: number;
+    chatId: number;
+    maskedKey: string;
+    keyFingerprint: string;
+    resetAt: string | null;
+    thresholdPercent: number;
+    category: AlertCategory;
+    summary: KeyUsageSummary;
+  }): boolean {
+    const res = this.db.prepare(`
+      INSERT OR IGNORE INTO bot_alert_jobs
+        (telegram_user_id, chat_id, masked_key, key_fingerprint, reset_at, threshold_percent, category, summary_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      args.telegramUserId,
+      args.chatId,
+      args.maskedKey,
+      args.keyFingerprint,
+      args.resetAt ?? '',
+      args.thresholdPercent,
+      args.category,
+      JSON.stringify(args.summary),
+    );
+    return Number(res.changes || 0) > 0;
+  }
+
+  pendingAlertJobs(limit: number): BotAlertJob[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM bot_alert_jobs
+      WHERE status = 'pending'
+      ORDER BY id ASC
+      LIMIT ?
+    `).all(limit) as Array<Record<string, unknown>>;
+    return rows.map(mapAlertJob);
+  }
+
+  markAlertJobSent(id: number, sentAt = new Date().toISOString()): void {
+    this.db.prepare(`
+      UPDATE bot_alert_jobs
+      SET status = 'sent', sent_at = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(sentAt, id);
+  }
+
+  markAlertJobFailed(id: number, error: string): void {
+    this.db.prepare(`
+      UPDATE bot_alert_jobs
+      SET attempts = attempts + 1,
+          last_error = ?,
+          status = CASE WHEN attempts + 1 >= 5 THEN 'failed' ELSE 'pending' END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(error, id);
+  }
 }
 
 function mapUser(row: Record<string, unknown>): BotUser {
@@ -283,5 +375,21 @@ function mapQuotaCheck(row: Record<string, unknown>): QuotaCheckRow {
     resetAt: row.reset_at == null ? null : String(row.reset_at),
     error: row.error == null ? null : String(row.error),
     checkedAt: String(row.checked_at),
+  };
+}
+
+function mapAlertJob(row: Record<string, unknown>): BotAlertJob {
+  return {
+    id: Number(row.id),
+    telegramUserId: Number(row.telegram_user_id),
+    chatId: Number(row.chat_id),
+    maskedKey: String(row.masked_key),
+    keyFingerprint: String(row.key_fingerprint),
+    resetAt: row.reset_at == null || row.reset_at === '' ? null : String(row.reset_at),
+    thresholdPercent: Number(row.threshold_percent),
+    category: String(row.category) as AlertCategory,
+    summary: JSON.parse(String(row.summary_json)) as KeyUsageSummary,
+    attempts: Number(row.attempts ?? 0),
+    createdAt: String(row.created_at),
   };
 }

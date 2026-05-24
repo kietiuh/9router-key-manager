@@ -118,7 +118,7 @@ Name: GoCinema Assistant
 Username: @gocinema_assistant_bot
 ```
 
-The bot is the main client assistant surface. The first release supports key management, quota checks, quota history, opt-in quota alerts, alert thresholds, settings/help, and `/cancel` to stop the current pending input while keeping the saved key and settings. Main bot screens use inline buttons, so actions such as refresh, settings, key, and history can update the current Telegram message instead of sending a new message each time. User-facing messages use Vietnamese-friendly status labels and compact Vietnam-time timestamps such as `21:59 24/05/2026`.
+The bot is the main client assistant surface. The first release supports key management, quota checks, quota history, opt-in quota alerts, alert thresholds, settings/help, and `/cancel` to stop the current pending input while keeping the saved key and settings. Main bot screens use inline buttons, so actions such as refresh, settings, key, and history can update the current Telegram message instead of sending a new message each time. User-facing messages use Vietnamese-friendly status labels and compact Vietnam-time timestamps such as `21:59 24/05/2026`. Proactive alerts are watcher-driven: the API service computes quota summaries and enqueues alert jobs, while the bot service only delivers pending Telegram jobs.
 
 The bot runs separately from the API/web service:
 
@@ -130,7 +130,7 @@ Important bot variables:
 
 - `TELEGRAM_BOT_TOKEN`: BotFather token for `@gocinema_assistant_bot`.
 - `BOT_PUBLIC_API_BASE_URL`: local key-manager API base URL; production uses `http://127.0.0.1:3000`.
-- `BOT_ALERT_CHECK_INTERVAL_SECONDS`: background quota alert scan interval.
+- `BOT_ALERT_CHECK_INTERVAL_SECONDS`: pending alert delivery queue scan interval; quota recomputation is handled by the API watcher.
 - `BOT_DEFAULT_ALERT_THRESHOLD_PERCENT`: default user alert threshold; alerts are disabled until the user opts in.
 
 Slash commands registered with Telegram:
