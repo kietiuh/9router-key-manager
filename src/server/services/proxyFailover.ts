@@ -17,6 +17,7 @@ export type FetchUpstreamResult = {
   isLargeContext: boolean;
   queuedMs: number;
   upstreamMs: number;
+  timeoutMs: number;
   attemptIndex: number;
   attemptCount: number;
 };
@@ -124,15 +125,15 @@ export async function fetchUpstreamWithFailover(options: FetchUpstreamOptions): 
       if (isRetryableUpstreamStatus(upstream.status) && attemptIndex < models.length - 1) {
         await cancelBody(upstream);
         lease.release();
-        options.log?.({ model, attemptIndex, attemptCount: models.length, upstreamStatus: upstream.status, retryReason: 'retryable_status' }, 'model failover retry');
+        options.log?.({ model, attemptIndex, attemptCount: models.length, upstreamStatus: upstream.status, retryReason: 'retryable_status', timeoutMs: lease.timeoutMs, bodyBytes, estimatedInputTokens, isLargeContext }, 'model failover retry');
         continue;
       }
-      return { upstream, lease, model, body, bodyBytes, estimatedInputTokens, isLargeContext, queuedMs: lease.queuedMs, upstreamMs, attemptIndex, attemptCount: models.length };
+      return { upstream, lease, model, body, bodyBytes, estimatedInputTokens, isLargeContext, queuedMs: lease.queuedMs, upstreamMs, timeoutMs: lease.timeoutMs, attemptIndex, attemptCount: models.length };
     } catch (err: any) {
       clearTimeout(timeout);
       lease.release();
       if (attemptIndex < models.length - 1) {
-        options.log?.({ model, attemptIndex, attemptCount: models.length, errorType: err?.name === 'AbortError' ? 'upstream_timeout' : 'proxy_error', error: err?.message, retryReason: 'request_error' }, 'model failover retry');
+        options.log?.({ model, attemptIndex, attemptCount: models.length, errorType: err?.name === 'AbortError' ? 'upstream_timeout' : 'proxy_error', error: err?.message, retryReason: 'request_error', timeoutMs: lease.timeoutMs, bodyBytes, estimatedInputTokens, isLargeContext }, 'model failover retry');
         continue;
       }
       const status = errorStatus(err);

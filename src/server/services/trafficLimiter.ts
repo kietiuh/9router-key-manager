@@ -6,7 +6,10 @@ export type TrafficLimitConfig = {
   largeContextThresholdTokens: number;
   largeContextMaxConcurrent: number;
   largeContextQueueLimit: number;
+  queueTimeoutMs: number;
+  largeContextQueueTimeoutMs: number;
   modelLimits: Record<string, { maxConcurrent: number; queueLimit: number; timeoutMs: number }>;
+  upstreamTimeouts: Record<string, { timeoutMs: number; largeContextTimeoutMs?: number }>;
 };
 
 export type TrafficClass = {
@@ -62,7 +65,7 @@ export class TrafficLimiter {
   constructor(private readonly cfg: TrafficLimitConfig) {}
 
   async acquire(cls: TrafficClass): Promise<TrafficLease> {
-    if (!this.cfg.enabled) return { queuedMs: 0, timeoutMs: this.timeoutFor(cls.model), release: () => {} };
+    if (!this.cfg.enabled) return { queuedMs: 0, timeoutMs: this.timeoutFor(cls.model, cls.isLargeContext), release: () => {} };
     const started = Date.now();
     const names = this.groupSpecs(cls);
     const releases: Array<() => void> = [];
@@ -81,12 +84,13 @@ export class TrafficLimiter {
 
   private groupSpecs(cls: TrafficClass) {
     const modelLimit = this.cfg.modelLimits[cls.model] ?? this.cfg.modelLimits['*'] ?? { maxConcurrent: this.cfg.globalMaxConcurrent, queueLimit: 100, timeoutMs: 120000 };
+    const queueTimeoutMs = this.cfg.queueTimeoutMs;
     const specs = [
-      { name: 'global', maxConcurrent: this.cfg.globalMaxConcurrent, queueLimit: 200, timeoutMs: modelLimit.timeoutMs },
-      { name: `model:${cls.model}`, maxConcurrent: modelLimit.maxConcurrent, queueLimit: modelLimit.queueLimit, timeoutMs: modelLimit.timeoutMs },
-      { name: `user:${cls.userId}`, maxConcurrent: this.cfg.perUserMaxConcurrent, queueLimit: this.cfg.perUserQueueLimit, timeoutMs: modelLimit.timeoutMs },
+      { name: 'global', maxConcurrent: this.cfg.globalMaxConcurrent, queueLimit: 200, timeoutMs: queueTimeoutMs },
+      { name: `model:${cls.model}`, maxConcurrent: modelLimit.maxConcurrent, queueLimit: modelLimit.queueLimit, timeoutMs: queueTimeoutMs },
+      { name: `user:${cls.userId}`, maxConcurrent: this.cfg.perUserMaxConcurrent, queueLimit: this.cfg.perUserQueueLimit, timeoutMs: queueTimeoutMs },
     ];
-    if (cls.isLargeContext) specs.push({ name: 'large-context', maxConcurrent: this.cfg.largeContextMaxConcurrent, queueLimit: this.cfg.largeContextQueueLimit, timeoutMs: Math.max(modelLimit.timeoutMs, 180000) });
+    if (cls.isLargeContext) specs.push({ name: 'large-context', maxConcurrent: this.cfg.largeContextMaxConcurrent, queueLimit: this.cfg.largeContextQueueLimit, timeoutMs: this.cfg.largeContextQueueTimeoutMs });
     return specs;
   }
 
@@ -99,8 +103,9 @@ export class TrafficLimiter {
   }
 
   private timeoutFor(model: string, large = false) {
-    const base = this.cfg.modelLimits[model]?.timeoutMs ?? this.cfg.modelLimits['*']?.timeoutMs ?? 120000;
-    return large ? Math.max(base, 180000) : base;
+    const override = this.cfg.upstreamTimeouts[model] ?? this.cfg.upstreamTimeouts['*'];
+    const base = override?.timeoutMs ?? this.cfg.modelLimits[model]?.timeoutMs ?? this.cfg.modelLimits['*']?.timeoutMs ?? 120000;
+    return large ? override?.largeContextTimeoutMs ?? Math.max(base, 180000) : base;
   }
 }
 
@@ -118,7 +123,10 @@ export function readTrafficLimitConfig(env: NodeJS.ProcessEnv): TrafficLimitConf
     largeContextThresholdTokens: num(env.TRAFFIC_LARGE_CONTEXT_TOKENS, 100000),
     largeContextMaxConcurrent: num(env.TRAFFIC_LARGE_CONTEXT_MAX_CONCURRENT, 1),
     largeContextQueueLimit: num(env.TRAFFIC_LARGE_CONTEXT_QUEUE_LIMIT, 5),
+    queueTimeoutMs: num(env.TRAFFIC_QUEUE_TIMEOUT_MS, 120000),
+    largeContextQueueTimeoutMs: num(env.TRAFFIC_LARGE_CONTEXT_QUEUE_TIMEOUT_MS, num(env.TRAFFIC_QUEUE_TIMEOUT_MS, 120000)),
     modelLimits: parseModelLimits(env.TRAFFIC_MODEL_LIMITS ?? 'cx/gpt-5.5:3:30:120000,*:20:100:120000'),
+    upstreamTimeouts: parseUpstreamTimeouts(env.TRAFFIC_UPSTREAM_TIMEOUTS ?? ''),
   };
 }
 
@@ -128,6 +136,17 @@ function parseModelLimits(raw: string) {
     const [model, c, q, t] = item.split(':');
     if (!model || !c || !q) continue;
     out[model] = { maxConcurrent: num(c, 3), queueLimit: num(q, 30), timeoutMs: num(t, 120000) };
+  }
+  return out;
+}
+
+function parseUpstreamTimeouts(raw: string) {
+  const out: TrafficLimitConfig['upstreamTimeouts'] = {};
+  for (const item of raw.split(',').map(s => s.trim()).filter(Boolean)) {
+    const [model, normal, large] = item.split(':');
+    if (!model || !normal) continue;
+    const timeoutMs = num(normal, 120000);
+    out[model] = { timeoutMs, largeContextTimeoutMs: large ? num(large, Math.max(timeoutMs, 180000)) : undefined };
   }
   return out;
 }

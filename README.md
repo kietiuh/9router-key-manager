@@ -41,6 +41,7 @@ npm run build
 ## Operations runbooks
 
 - Public 9router lag mitigation and VPS rebuild steps: [`docs/ops/9router-public-lag-mitigation.md`](docs/ops/9router-public-lag-mitigation.md).
+- Traffic queue and upstream generation timeout policy: [`docs/ops/9router-traffic-timeouts.md`](docs/ops/9router-traffic-timeouts.md).
 
 Run the 9router observability mitigation in dry-run mode:
 
