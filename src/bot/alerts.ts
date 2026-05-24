@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { KeyUsageSummary } from '../shared/types.js';
 import type { KeyChecker, TelegramSender } from './bot.js';
 import type { AlertCategory, BotDatabase } from './database.js';
-import { formatLocalDateTime, formatStatusLabel, menuMarkup } from './formatting.js';
+import { formatLocalDateTime, formatStatusLabel, quotaMarkup } from './formatting.js';
 
 export function keyFingerprint(apiKey: string): string {
   return crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 32);
@@ -51,7 +51,7 @@ export class AlertEngine {
         const fingerprint = keyFingerprint(user.apiKey);
         const resetAt = summary.windowEnd ?? null;
         if (this.deps.db.hasSentAlert(user.telegramUserId, fingerprint, resetAt, user.alertThresholdPercent, category)) continue;
-        await this.deps.telegram.sendMessage(user.chatId, formatAlertMessage(summary, user.alertThresholdPercent, this.deps.timezoneOffsetHours), { reply_markup: menuMarkup() });
+        await this.deps.telegram.sendMessage(user.chatId, formatAlertMessage(summary, user.alertThresholdPercent, this.deps.timezoneOffsetHours), { reply_markup: quotaMarkup() });
         this.deps.db.recordAlertSent({
           telegramUserId: user.telegramUserId,
           maskedKey: summary.keyMasked,
@@ -86,6 +86,6 @@ function formatAlertMessage(summary: KeyUsageSummary, thresholdPercent: number, 
     `Tình trạng: ${formatStatusLabel(summary.status)}`,
     `Reset lúc: ${reset}`,
     '',
-    'Dùng /quota để xem chi tiết hoặc /alerts_off để tắt thông báo.',
+    'Bấm Làm mới quota để xem chi tiết hoặc vào Cài đặt để tắt cảnh báo.',
   ].join('\n');
 }

@@ -1,14 +1,25 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
+import { BOT_ACTIONS } from './actions.js';
 import { GoCinemaAssistantBot, type TelegramSender } from './bot.js';
 import { BotDatabase, migrateBotDatabase } from './database.js';
 import type { KeyUsageSummary } from '../shared/types.js';
 
 class FakeTelegram implements TelegramSender {
   messages: Array<{ chatId: number; text: string; options?: Record<string, unknown> }> = [];
+  edits: Array<{ chatId: number; messageId: number; text: string; options?: Record<string, unknown> }> = [];
+  answers: Array<{ callbackQueryId: string; options?: Record<string, unknown> }> = [];
 
   async sendMessage(chatId: number, text: string, options?: Record<string, unknown>): Promise<void> {
     this.messages.push({ chatId, text, options });
+  }
+
+  async editMessageText(chatId: number, messageId: number, text: string, options?: Record<string, unknown>): Promise<void> {
+    this.edits.push({ chatId, messageId, text, options });
+  }
+
+  async answerCallbackQuery(callbackQueryId: string, options?: Record<string, unknown>): Promise<void> {
+    this.answers.push({ callbackQueryId, options });
   }
 }
 
@@ -34,11 +45,27 @@ function makeApp() {
 
 function message(text: string) {
   return {
+    update_id: 1,
     message: {
       message_id: 1,
       chat: { id: 99 },
       from: { id: 123, username: 'alice', first_name: 'Alice' },
       text,
+    },
+  };
+}
+
+function callback(data: string) {
+  return {
+    update_id: 2,
+    callback_query: {
+      id: 'callback-1',
+      from: { id: 123, username: 'alice', first_name: 'Alice' },
+      message: {
+        message_id: 10,
+        chat: { id: 99 },
+      },
+      data,
     },
   };
 }
@@ -87,7 +114,9 @@ describe('GoCinemaAssistantBot', () => {
     await app.handleUpdate(message('/start'));
 
     expect(telegram.messages.at(-1)?.text).toContain('GoCinema Assistant');
-    expect(telegram.messages.at(-1)?.options?.reply_markup).toMatchObject({ resize_keyboard: true });
+    expect(telegram.messages.at(-1)?.options?.reply_markup).toMatchObject({
+      inline_keyboard: expect.any(Array),
+    });
   });
 
   it('shows quota immediately on start when the user already saved a key', async () => {
@@ -105,7 +134,9 @@ describe('GoCinemaAssistantBot', () => {
 
     await app.handleUpdate(message('/quota'));
 
-    expect(telegram.messages.at(-1)?.text).toContain('/key_change');
+    expect(telegram.messages.at(-1)?.text).toContain('Bấm Lưu key');
+    const replyMarkup = telegram.messages.at(-1)?.options?.reply_markup as { inline_keyboard: unknown[][] };
+    expect(replyMarkup.inline_keyboard[0]).toEqual([{ callback_data: BOT_ACTIONS.KEY_CHANGE, text: '🔑 Lưu key' }]);
   });
 
   it('validates and stores a replacement key before showing quota', async () => {
@@ -133,6 +164,25 @@ describe('GoCinemaAssistantBot', () => {
     expect(telegram.messages.at(-1)?.text).toContain('sk-a...test');
   });
 
+  it('edits the current message when users press inline buttons', async () => {
+    const { app, db, telegram, api } = makeApp();
+    db.saveUserKey({ id: 123, username: 'alice' }, 99, 'sk-secret', 'sk-s...cret');
+
+    await app.handleUpdate(callback(BOT_ACTIONS.QUOTA));
+
+    expect(api.calls).toEqual(['sk-secret']);
+    expect(telegram.messages).toEqual([]);
+    expect(telegram.edits).toHaveLength(1);
+    expect(telegram.edits[0]).toMatchObject({
+      chatId: 99,
+      messageId: 10,
+    });
+    expect(telegram.edits[0].text).toContain('📊 Quota của bạn');
+    const replyMarkup = telegram.edits[0].options?.reply_markup as { inline_keyboard: unknown[][] };
+    expect(replyMarkup.inline_keyboard[0]).toEqual([{ callback_data: BOT_ACTIONS.QUOTA, text: '🔄 Làm mới quota' }]);
+    expect(telegram.answers).toEqual([{ callbackQueryId: 'callback-1', options: undefined }]);
+  });
+
   it('cancels pending conversation state without deleting the saved key', async () => {
     const { app, db, telegram } = makeApp();
     db.saveUserKey({ id: 123, username: 'alice' }, 99, 'sk-secret', 'sk-s...cret');
@@ -157,6 +207,9 @@ describe('GoCinemaAssistantBot', () => {
     expect(db.getSettings(123)).toMatchObject({ alertsEnabled: true, alertThresholdPercent: 15 });
     expect(telegram.messages.at(-1)?.text).toContain('Cảnh báo quota: đang bật');
     expect(telegram.messages.at(-1)?.text).toContain('15%');
+    expect(telegram.messages.at(-1)?.options?.reply_markup).toMatchObject({
+      inline_keyboard: expect.any(Array),
+    });
   });
 
   it('keeps unknown free-form text concise when no conversation is pending', async () => {

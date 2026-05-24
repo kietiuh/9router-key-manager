@@ -1,9 +1,14 @@
 import type { KeyStatus, KeyUsageSummary } from '../shared/types.js';
+import { BOT_ACTIONS } from './actions.js';
 
 export type ReplyKeyboardMarkup = {
   keyboard: Array<Array<{ text: string }>>;
   resize_keyboard: boolean;
   is_persistent: boolean;
+};
+
+export type InlineKeyboardMarkup = {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
 };
 
 export function menuMarkup(): ReplyKeyboardMarkup {
@@ -15,6 +20,98 @@ export function menuMarkup(): ReplyKeyboardMarkup {
     ],
     resize_keyboard: true,
     is_persistent: true,
+  };
+}
+
+export function homeMarkup(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: '📊 Quota', callback_data: BOT_ACTIONS.QUOTA },
+        { text: '🔑 Key', callback_data: BOT_ACTIONS.KEY },
+      ],
+      [
+        { text: '📜 Lịch sử', callback_data: BOT_ACTIONS.HISTORY },
+        { text: '⚙️ Cài đặt', callback_data: BOT_ACTIONS.SETTINGS },
+      ],
+      [{ text: '❓ Trợ giúp', callback_data: BOT_ACTIONS.HELP }],
+    ],
+  };
+}
+
+export function quotaMarkup(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: '🔄 Làm mới quota', callback_data: BOT_ACTIONS.QUOTA }],
+      [
+        { text: '🔑 Key', callback_data: BOT_ACTIONS.KEY },
+        { text: '📜 Lịch sử', callback_data: BOT_ACTIONS.HISTORY },
+      ],
+      [
+        { text: '⚙️ Cài đặt', callback_data: BOT_ACTIONS.SETTINGS },
+        { text: '❓ Trợ giúp', callback_data: BOT_ACTIONS.HELP },
+      ],
+    ],
+  };
+}
+
+export function noKeyMarkup(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: '🔑 Lưu key', callback_data: BOT_ACTIONS.KEY_CHANGE }],
+      [{ text: '❓ Trợ giúp', callback_data: BOT_ACTIONS.HELP }],
+    ],
+  };
+}
+
+export function cancelMarkup(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [[{ text: 'Hủy thao tác', callback_data: BOT_ACTIONS.CANCEL }]],
+  };
+}
+
+export function keyMarkup(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: '🔁 Thay key', callback_data: BOT_ACTIONS.KEY_CHANGE }],
+      [
+        { text: '📊 Quota', callback_data: BOT_ACTIONS.QUOTA },
+        { text: '⚙️ Cài đặt', callback_data: BOT_ACTIONS.SETTINGS },
+      ],
+    ],
+  };
+}
+
+export function historyMarkup(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: '🔄 Làm mới lịch sử', callback_data: BOT_ACTIONS.HISTORY }],
+      [
+        { text: '📊 Quota', callback_data: BOT_ACTIONS.QUOTA },
+        { text: '⚙️ Cài đặt', callback_data: BOT_ACTIONS.SETTINGS },
+      ],
+    ],
+  };
+}
+
+export function settingsMarkup(args: { alertsEnabled: boolean }): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{
+        text: args.alertsEnabled ? '🔕 Tắt cảnh báo' : '🔔 Bật cảnh báo',
+        callback_data: args.alertsEnabled ? BOT_ACTIONS.ALERTS_OFF : BOT_ACTIONS.ALERTS_ON,
+      }],
+      [
+        { text: '20%', callback_data: BOT_ACTIONS.THRESHOLD_20 },
+        { text: '10%', callback_data: BOT_ACTIONS.THRESHOLD_10 },
+        { text: '5%', callback_data: BOT_ACTIONS.THRESHOLD_5 },
+      ],
+      [{ text: '✏️ Nhập ngưỡng khác', callback_data: BOT_ACTIONS.THRESHOLD_CUSTOM }],
+      [
+        { text: '📊 Quota', callback_data: BOT_ACTIONS.QUOTA },
+        { text: '🔑 Key', callback_data: BOT_ACTIONS.KEY },
+      ],
+    ],
   };
 }
 
@@ -92,7 +189,14 @@ function statusGuidance(summary: KeyUsageSummary): string | null {
 export function noKeyText(): string {
   return [
     'Bạn chưa lưu GoCinema API key.',
-    'Gõ /key_change rồi gửi key để bot kiểm tra quota và gửi cảnh báo.',
+    'Bấm Lưu key bên dưới rồi gửi key để bot kiểm tra quota và gửi cảnh báo.',
+  ].join('\n');
+}
+
+export function formatHomeText(): string {
+  return [
+    'GoCinema Assistant',
+    'Chọn thao tác bên dưới. Các nút sẽ cập nhật ngay trong tin nhắn này khi có thể.',
   ].join('\n');
 }
 
@@ -106,7 +210,7 @@ export function formatHelpText(): string {
     '🔔 Thông báo - bật/tắt cảnh báo quota',
     '📜 Lịch sử - 5 lần kiểm tra gần đây',
     '',
-    'Lệnh hữu ích: /quota, /key_change, /settings, /threshold_custom, /cancel',
+    'Khi bot đang chờ bạn nhập key hoặc ngưỡng cảnh báo, dùng /cancel để hủy.',
   ].join('\n');
 }
 
@@ -119,7 +223,7 @@ export function formatUnknownText(): string {
 
 export function formatKeyText(args: { keyMasked: string | null | undefined }): string {
   if (!args.keyMasked) return noKeyText();
-  return [`🔑 Key đang lưu`, args.keyMasked, '', 'Dùng /key_change để thay key.'].join('\n');
+  return ['🔑 Key đang lưu', args.keyMasked, '', 'Bấm Thay key nếu muốn cập nhật key mới.'].join('\n');
 }
 
 export function formatSettingsText(args: { alertsEnabled: boolean; alertThresholdPercent: number }): string {
@@ -131,10 +235,7 @@ export function formatSettingsText(args: { alertsEnabled: boolean; alertThreshol
     alertLine,
     `Ngưỡng hiện tại: ${args.alertThresholdPercent}%`,
     '',
-    'Bật cảnh báo: /alerts_on',
-    'Tắt cảnh báo: /alerts_off',
-    'Đổi ngưỡng nhanh: /threshold_20 /threshold_10 /threshold_5',
-    'Tùy chỉnh ngưỡng: /threshold_custom',
+    'Chọn nút bên dưới để bật/tắt cảnh báo hoặc đổi ngưỡng.',
   ].join('\n');
 }
 

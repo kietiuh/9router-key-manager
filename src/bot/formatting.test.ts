@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { BOT_ACTIONS } from './actions.js';
 import {
   formatHelpText,
   formatHistoryText,
+  formatHomeText,
   formatKeyText,
   formatQuotaMessage,
   formatSettingsText,
+  homeMarkup,
   menuMarkup,
   noKeyText,
+  quotaMarkup,
+  settingsMarkup,
 } from './formatting.js';
 
 describe('bot formatting', () => {
@@ -20,6 +25,16 @@ describe('bot formatting', () => {
       resize_keyboard: true,
       is_persistent: true,
     });
+  });
+
+  it('builds inline keyboards for message-level actions', () => {
+    expect(homeMarkup().inline_keyboard[0]).toEqual([
+      { text: '📊 Quota', callback_data: BOT_ACTIONS.QUOTA },
+      { text: '🔑 Key', callback_data: BOT_ACTIONS.KEY },
+    ]);
+    expect(quotaMarkup().inline_keyboard[0]).toEqual([{ text: '🔄 Làm mới quota', callback_data: BOT_ACTIONS.QUOTA }]);
+    expect(settingsMarkup({ alertsEnabled: true }).inline_keyboard[0]).toEqual([{ text: '🔕 Tắt cảnh báo', callback_data: BOT_ACTIONS.ALERTS_OFF }]);
+    expect(settingsMarkup({ alertsEnabled: false }).inline_keyboard[0]).toEqual([{ text: '🔔 Bật cảnh báo', callback_data: BOT_ACTIONS.ALERTS_ON }]);
   });
 
   it('formats quota dashboard with key, usage, status, reset, and alert state', () => {
@@ -126,14 +141,15 @@ describe('bot formatting', () => {
   });
 
   it('formats help, missing key, key, and settings text', () => {
+    expect(formatHomeText()).toContain('GoCinema Assistant');
     expect(formatHelpText()).toContain('Dùng các nút bên dưới');
     expect(formatHelpText()).not.toContain('/clear');
-    expect(formatHelpText()).toContain('/threshold_custom');
-    expect(noKeyText()).toContain('/key_change');
+    expect(formatHelpText()).toContain('/cancel');
+    expect(noKeyText()).toContain('Bấm Lưu key');
     expect(formatKeyText({ keyMasked: 'sk-a...test' })).toContain('sk-a...test');
     const settings = formatSettingsText({ alertsEnabled: false, alertThresholdPercent: 10 });
     expect(settings).toContain('Cảnh báo quota: đang tắt');
-    expect(settings).toContain('/threshold_custom');
+    expect(settings).toContain('Chọn nút bên dưới');
   });
 
   it('formats history entries with compact Vietnamese timestamps', () => {
