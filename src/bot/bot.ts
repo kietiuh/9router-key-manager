@@ -1,29 +1,45 @@
 import type { KeyUsageSummary } from '../shared/types.js';
+import { commandForAction } from './actions.js';
 import { PublicApiError } from './clientApi.js';
 import type { BotDatabase, BotUserIdentity } from './database.js';
 import {
+  cancelMarkup,
   formatHelpText,
   formatHistoryText,
+  formatHomeText,
   formatKeyText,
   formatQuotaMessage,
   formatSettingsText,
   formatUnknownText,
-  menuMarkup,
+  historyMarkup,
+  homeMarkup,
+  keyMarkup,
+  noKeyMarkup,
   noKeyText,
+  quotaMarkup,
+  settingsMarkup,
 } from './formatting.js';
 import { commandForMenuText } from './telegram.js';
+import type { TelegramUpdate } from './telegram.js';
 
-type TelegramUpdate = {
-  message?: {
-    message_id?: number;
-    chat?: { id?: number };
-    from?: { id?: number; username?: string; first_name?: string; last_name?: string };
-    text?: string;
-  };
+type RenderTarget = {
+  chatId: number;
+  messageId?: number;
 };
+
+type TelegramUser = {
+  id?: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+};
+
+type CallbackQuery = NonNullable<TelegramUpdate['callback_query']>;
 
 export type TelegramSender = {
   sendMessage(chatId: number, text: string, options?: Record<string, unknown>): Promise<void>;
+  editMessageText?(chatId: number, messageId: number, text: string, options?: Record<string, unknown>): Promise<void>;
+  answerCallbackQuery?(callbackQueryId: string, options?: Record<string, unknown>): Promise<void>;
 };
 
 export type KeyChecker = {
@@ -41,13 +57,18 @@ export class GoCinemaAssistantBot {
   ) {}
 
   async handleUpdate(update: TelegramUpdate): Promise<void> {
+    if (update.callback_query) {
+      await this.handleCallback(update.callback_query);
+      return;
+    }
+
     const message = update.message;
     const chatId = message?.chat?.id;
     const telegramUserId = message?.from?.id;
     const rawText = message?.text?.trim();
     if (!chatId || !telegramUserId || !rawText) return;
 
-    const identity = identityFromMessage(message.from);
+    const identity = identityFromUser(message.from);
     this.deps.db.saveUserIdentity(identity, chatId);
 
     const menuCommand = commandForMenuText(rawText);
@@ -59,77 +80,122 @@ export class GoCinemaAssistantBot {
       return;
     }
     if (state === 'awaiting_threshold' && !command) {
-      await this.handleIncomingThreshold(telegramUserId, chatId, rawText);
+      await this.handleIncomingThreshold(telegramUserId, { chatId }, rawText);
       return;
     }
 
-    switch (command ?? text) {
+    await this.handleCommand({
+      command,
+      text,
+      telegramUserId,
+      target: { chatId },
+    });
+  }
+
+  private async handleCallback(callback: CallbackQuery): Promise<void> {
+    const chatId = callback.message?.chat?.id;
+    const messageId = callback.message?.message_id;
+    const telegramUserId = callback.from?.id;
+    const command = callback.data ? commandForAction(callback.data) : null;
+    if (!chatId || !telegramUserId || !messageId || !command) {
+      await this.answerCallback(callback.id, 'Thao tác này không còn hợp lệ.');
+      return;
+    }
+
+    const identity = identityFromUser(callback.from);
+    this.deps.db.saveUserIdentity(identity, chatId);
+    await this.answerCallback(callback.id);
+
+    try {
+      await this.handleCommand({
+        command,
+        text: command,
+        telegramUserId,
+        target: { chatId, messageId },
+      });
+    } catch (error) {
+      await this.render({ chatId, messageId }, `Không xử lý được thao tác: ${userErrorMessage(error)}`, homeMarkup());
+      throw error;
+    }
+  }
+
+  private async handleCommand(args: {
+    command: string | null;
+    text: string;
+    telegramUserId: number;
+    target: RenderTarget;
+  }): Promise<void> {
+    switch (args.command ?? args.text) {
       case '/start':
-        await this.handleStart(telegramUserId, chatId);
+        await this.handleStart(args.telegramUserId, args.target);
         break;
       case '/quota':
       case '/check':
       case '/refresh':
-        await this.handleQuota(telegramUserId, chatId);
+        await this.handleQuota(args.telegramUserId, args.target);
         break;
       case '/key':
-        await this.handleKey(telegramUserId, chatId);
+        await this.handleKey(args.telegramUserId, args.target);
         break;
       case '/key_change':
-        this.deps.db.setUserState(telegramUserId, 'awaiting_key');
-        await this.deps.telegram.sendMessage(chatId, 'Gửi GoCinema API key mới.\nDùng /cancel để hủy thao tác này.', { reply_markup: menuMarkup() });
+        this.deps.db.setUserState(args.telegramUserId, 'awaiting_key');
+        await this.render(args.target, 'Gửi GoCinema API key mới trong tin nhắn tiếp theo.\nDùng /cancel hoặc bấm Hủy thao tác để dừng.', cancelMarkup());
         break;
       case '/history':
-        await this.deps.telegram.sendMessage(chatId, formatHistoryText(this.deps.db.recentQuotaChecks(telegramUserId, 5), this.deps.timezoneOffsetHours), { reply_markup: menuMarkup() });
+        await this.render(
+          args.target,
+          formatHistoryText(this.deps.db.recentQuotaChecks(args.telegramUserId, 5), this.deps.timezoneOffsetHours),
+          historyMarkup(),
+        );
         break;
       case '/settings':
-        await this.handleSettings(telegramUserId, chatId);
+        await this.handleSettings(args.telegramUserId, args.target);
         break;
       case '/alerts_on':
-        this.deps.db.setAlertSettings(telegramUserId, true);
-        await this.handleSettings(telegramUserId, chatId);
+        this.deps.db.setAlertSettings(args.telegramUserId, true);
+        await this.handleSettings(args.telegramUserId, args.target);
         break;
       case '/alerts_off':
-        this.deps.db.setAlertSettings(telegramUserId, false);
-        await this.handleSettings(telegramUserId, chatId);
+        this.deps.db.setAlertSettings(args.telegramUserId, false);
+        await this.handleSettings(args.telegramUserId, args.target);
         break;
       case '/threshold_20':
-        await this.handleThreshold(telegramUserId, chatId, 20);
+        await this.handleThreshold(args.telegramUserId, args.target, 20);
         break;
       case '/threshold_10':
-        await this.handleThreshold(telegramUserId, chatId, 10);
+        await this.handleThreshold(args.telegramUserId, args.target, 10);
         break;
       case '/threshold_5':
-        await this.handleThreshold(telegramUserId, chatId, 5);
+        await this.handleThreshold(args.telegramUserId, args.target, 5);
         break;
       case '/threshold_custom':
-        this.deps.db.setUserState(telegramUserId, 'awaiting_threshold');
-        await this.deps.telegram.sendMessage(chatId, 'Gửi ngưỡng cảnh báo quota từ 1 đến 100. Dùng /cancel để hủy.', { reply_markup: menuMarkup() });
+        this.deps.db.setUserState(args.telegramUserId, 'awaiting_threshold');
+        await this.render(args.target, 'Gửi ngưỡng cảnh báo quota từ 1 đến 100 trong tin nhắn tiếp theo.\nDùng /cancel hoặc bấm Hủy thao tác để dừng.', cancelMarkup());
         break;
       case '/cancel':
-        this.deps.db.clearUserState(telegramUserId);
-        await this.deps.telegram.sendMessage(chatId, 'Đã hủy thao tác đang nhập.', { reply_markup: menuMarkup() });
+        this.deps.db.clearUserState(args.telegramUserId);
+        await this.render(args.target, 'Đã hủy thao tác đang nhập.', homeMarkup());
         break;
       case '/help':
-        await this.deps.telegram.sendMessage(chatId, formatHelpText(), { reply_markup: menuMarkup() });
+        await this.render(args.target, formatHelpText(), homeMarkup());
         break;
       default:
-        await this.deps.telegram.sendMessage(chatId, command ? formatHelpText() : formatUnknownText(), { reply_markup: menuMarkup() });
+        await this.render(args.target, args.command ? formatHelpText() : formatUnknownText(), homeMarkup());
         break;
     }
   }
 
-  private async handleStart(telegramUserId: number, chatId: number): Promise<void> {
+  private async handleStart(telegramUserId: number, target: RenderTarget): Promise<void> {
     const user = this.deps.db.getUser(telegramUserId);
     if (user?.apiKey) {
-      await this.handleQuota(telegramUserId, chatId);
+      await this.handleQuota(telegramUserId, target);
       return;
     }
-    await this.sendMenu(chatId);
+    await this.sendMenu(target);
   }
 
-  private async sendMenu(chatId: number): Promise<void> {
-    await this.deps.telegram.sendMessage(chatId, 'GoCinema Assistant\nChọn thao tác bên dưới. Nếu chưa lưu key, gõ /key_change để bắt đầu.', { reply_markup: menuMarkup() });
+  private async sendMenu(target: RenderTarget): Promise<void> {
+    await this.render(target, formatHomeText(), homeMarkup());
   }
 
   private async handleIncomingKey(identity: BotUserIdentity, chatId: number, apiKey: string): Promise<void> {
@@ -139,68 +205,86 @@ export class GoCinemaAssistantBot {
       this.deps.db.clearUserState(identity.id);
       this.logQuota(identity.id, 'manual', summary);
       const settings = this.deps.db.getSettings(identity.id);
-      await this.deps.telegram.sendMessage(chatId, formatQuotaMessage({
+      await this.render({ chatId }, formatQuotaMessage({
         summary,
         alertsEnabled: settings.alertsEnabled,
         alertThresholdPercent: settings.alertThresholdPercent,
         timezoneOffsetHours: this.deps.timezoneOffsetHours,
-      }), { reply_markup: menuMarkup() });
+      }), quotaMarkup());
     } catch (error) {
       const message = userErrorMessage(error);
       this.deps.db.logQuotaCheck({ telegramUserId: identity.id, source: 'manual', success: false, maskedKey: null, error: message });
-      await this.deps.telegram.sendMessage(chatId, `Không kiểm tra được key: ${message}\nGửi key khác hoặc dùng /cancel.`, { reply_markup: menuMarkup() });
+      await this.render({ chatId }, `Không kiểm tra được key: ${message}\nGửi key khác hoặc dùng /cancel.`, cancelMarkup());
     }
   }
 
-  private async handleQuota(telegramUserId: number, chatId: number): Promise<void> {
+  private async handleQuota(telegramUserId: number, target: RenderTarget): Promise<void> {
     const user = this.deps.db.getUser(telegramUserId);
     if (!user?.apiKey) {
-      await this.deps.telegram.sendMessage(chatId, noKeyText(), { reply_markup: menuMarkup() });
+      await this.render(target, noKeyText(), noKeyMarkup());
       return;
     }
     try {
       const summary = await this.deps.api.checkKey(user.apiKey);
       this.logQuota(telegramUserId, 'manual', summary);
       const settings = this.deps.db.getSettings(telegramUserId);
-      await this.deps.telegram.sendMessage(chatId, formatQuotaMessage({
+      await this.render(target, formatQuotaMessage({
         summary,
         alertsEnabled: settings.alertsEnabled,
         alertThresholdPercent: settings.alertThresholdPercent,
         timezoneOffsetHours: this.deps.timezoneOffsetHours,
-      }), { reply_markup: menuMarkup() });
+      }), quotaMarkup());
     } catch (error) {
       const message = userErrorMessage(error);
       this.deps.db.logQuotaCheck({ telegramUserId, source: 'manual', success: false, maskedKey: user.keyMasked, error: message });
-      await this.deps.telegram.sendMessage(chatId, `Không kiểm tra được quota: ${message}`, { reply_markup: menuMarkup() });
+      await this.render(target, `Không kiểm tra được quota: ${message}`, quotaMarkup());
     }
   }
 
-  private async handleKey(telegramUserId: number, chatId: number): Promise<void> {
+  private async handleKey(telegramUserId: number, target: RenderTarget): Promise<void> {
     const user = this.deps.db.getUser(telegramUserId);
-    await this.deps.telegram.sendMessage(chatId, formatKeyText({ keyMasked: user?.keyMasked }), { reply_markup: menuMarkup() });
+    await this.render(target, formatKeyText({ keyMasked: user?.keyMasked }), user?.keyMasked ? keyMarkup() : noKeyMarkup());
   }
 
-  private async handleSettings(telegramUserId: number, chatId: number): Promise<void> {
+  private async handleSettings(telegramUserId: number, target: RenderTarget): Promise<void> {
     const settings = this.deps.db.getSettings(telegramUserId);
-    await this.deps.telegram.sendMessage(chatId, formatSettingsText(settings), { reply_markup: menuMarkup() });
+    await this.render(target, formatSettingsText(settings), settingsMarkup(settings));
   }
 
-  private async handleThreshold(telegramUserId: number, chatId: number, thresholdPercent: number): Promise<void> {
+  private async handleThreshold(telegramUserId: number, target: RenderTarget, thresholdPercent: number): Promise<void> {
     const current = this.deps.db.getSettings(telegramUserId);
     this.deps.db.setAlertSettings(telegramUserId, current.alertsEnabled, thresholdPercent);
-    await this.handleSettings(telegramUserId, chatId);
+    await this.handleSettings(telegramUserId, target);
   }
 
-  private async handleIncomingThreshold(telegramUserId: number, chatId: number, rawThreshold: string): Promise<void> {
+  private async handleIncomingThreshold(telegramUserId: number, target: RenderTarget, rawThreshold: string): Promise<void> {
     const thresholdPercent = Number(rawThreshold);
     if (!Number.isInteger(thresholdPercent) || thresholdPercent < 1 || thresholdPercent > 100) {
-      await this.deps.telegram.sendMessage(chatId, 'Ngưỡng phải là số nguyên từ 1 đến 100. Gửi lại hoặc dùng /cancel.', { reply_markup: menuMarkup() });
+      await this.render(target, 'Ngưỡng phải là số nguyên từ 1 đến 100. Gửi lại hoặc dùng /cancel.', cancelMarkup());
       return;
     }
     const current = this.deps.db.getSettings(telegramUserId);
     this.deps.db.setAlertSettings(telegramUserId, current.alertsEnabled, thresholdPercent);
     this.deps.db.clearUserState(telegramUserId);
-    await this.handleSettings(telegramUserId, chatId);
+    await this.handleSettings(telegramUserId, target);
+  }
+
+  private async render(target: RenderTarget, text: string, replyMarkup: Record<string, unknown>): Promise<void> {
+    const options = { reply_markup: replyMarkup };
+    if (target.messageId && this.deps.telegram.editMessageText) {
+      await this.deps.telegram.editMessageText(target.chatId, target.messageId, text, options);
+      return;
+    }
+    await this.deps.telegram.sendMessage(target.chatId, text, options);
+  }
+
+  private async answerCallback(callbackQueryId: string, text?: string): Promise<void> {
+    if (!this.deps.telegram.answerCallbackQuery) return;
+    if (text) {
+      await this.deps.telegram.answerCallbackQuery(callbackQueryId, { text });
+      return;
+    }
+    await this.deps.telegram.answerCallbackQuery(callbackQueryId);
   }
 
   private logQuota(telegramUserId: number, source: 'manual' | 'alert', summary: KeyUsageSummary): void {
@@ -218,7 +302,7 @@ export class GoCinemaAssistantBot {
   }
 }
 
-function identityFromMessage(from: NonNullable<TelegramUpdate['message']>['from']): BotUserIdentity {
+function identityFromUser(from: TelegramUser | undefined): BotUserIdentity {
   return {
     id: Number(from?.id),
     username: from?.username ?? null,

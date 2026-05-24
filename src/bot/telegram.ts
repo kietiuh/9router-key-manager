@@ -13,6 +13,15 @@ export type TelegramUpdate = {
     from?: { id?: number; username?: string; first_name?: string; last_name?: string };
     text?: string;
   };
+  callback_query?: {
+    id: string;
+    from?: { id?: number; username?: string; first_name?: string; last_name?: string };
+    message?: {
+      message_id?: number;
+      chat?: { id?: number };
+    };
+    data?: string;
+  };
 };
 
 export const BOT_COMMANDS: BotCommand[] = [
@@ -60,6 +69,19 @@ export class TelegramClient {
     await this.call('sendMessage', { chat_id: chatId, text, ...options });
   }
 
+  async editMessageText(chatId: number, messageId: number, text: string, options: Record<string, unknown> = {}): Promise<void> {
+    try {
+      await this.call('editMessageText', { chat_id: chatId, message_id: messageId, text, ...options });
+    } catch (error) {
+      if (error instanceof Error && error.message.toLowerCase().includes('message is not modified')) return;
+      throw error;
+    }
+  }
+
+  async answerCallbackQuery(callbackQueryId: string, options: Record<string, unknown> = {}): Promise<void> {
+    await this.call('answerCallbackQuery', { callback_query_id: callbackQueryId, ...options });
+  }
+
   async setMyCommands(commands: BotCommand[]): Promise<void> {
     await this.call('setMyCommands', { commands });
   }
@@ -68,7 +90,7 @@ export class TelegramClient {
     return this.call<TelegramUpdate[]>('getUpdates', {
       offset: args.offset,
       timeout: args.timeoutSeconds,
-      allowed_updates: ['message'],
+      allowed_updates: ['message', 'callback_query'],
     });
   }
 

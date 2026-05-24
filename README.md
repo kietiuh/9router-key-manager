@@ -118,7 +118,7 @@ Name: GoCinema Assistant
 Username: @gocinema_assistant_bot
 ```
 
-The bot is the main client assistant surface. The first release supports key management, quota checks, quota history, opt-in quota alerts, alert thresholds, settings/help, and `/cancel` to stop the current pending input while keeping the saved key and settings. User-facing messages use Vietnamese-friendly status labels and compact Vietnam-time timestamps such as `21:59 24/05/2026`.
+The bot is the main client assistant surface. The first release supports key management, quota checks, quota history, opt-in quota alerts, alert thresholds, settings/help, and `/cancel` to stop the current pending input while keeping the saved key and settings. Main bot screens use inline buttons, so actions such as refresh, settings, key, and history can update the current Telegram message instead of sending a new message each time. User-facing messages use Vietnamese-friendly status labels and compact Vietnam-time timestamps such as `21:59 24/05/2026`.
 
 The bot runs separately from the API/web service:
 
@@ -140,7 +140,7 @@ Slash commands registered with Telegram:
 /threshold_20 /threshold_10 /threshold_5 /threshold_custom /history /settings /cancel /help
 ```
 
-When a user with a saved key opens `/start`, the bot shows the current quota immediately. Unknown free-form messages get a short fallback instead of the full command list.
+When a user with a saved key opens `/start`, the bot shows the current quota immediately. Telegram callback actions are enabled through `callback_query` updates and update existing bot messages with `editMessageText` where possible. Unknown free-form messages get a short fallback instead of the full command list.
 
 Deploy scaffold: [`deploy/systemd/gocinema-assistant-bot.service.example`](deploy/systemd/gocinema-assistant-bot.service.example).
 
