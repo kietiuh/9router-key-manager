@@ -17,7 +17,6 @@ describe('telegram command metadata', () => {
       'threshold_5',
       'threshold_custom',
       'history',
-      'clear',
       'settings',
       'cancel',
       'help',
@@ -28,7 +27,6 @@ describe('telegram command metadata', () => {
     expect(commandForMenuText('📊 Quota')).toBe('/quota');
     expect(commandForMenuText('🔑 Key')).toBe('/key');
     expect(commandForMenuText('🔔 Thông báo')).toBe('/settings');
-    expect(commandForMenuText('🧹 Clear')).toBe('/clear');
     expect(commandForMenuText('📜 Lịch sử')).toBe('/history');
     expect(commandForMenuText('⚙️ Cài đặt')).toBe('/settings');
     expect(commandForMenuText('❓ Trợ giúp')).toBe('/help');

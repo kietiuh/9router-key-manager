@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  clearConversationText,
   formatHelpText,
   formatKeyText,
   formatQuotaMessage,
@@ -14,8 +13,8 @@ describe('bot formatting', () => {
     expect(menuMarkup()).toEqual({
       keyboard: [
         [{ text: '📊 Quota' }, { text: '🔑 Key' }],
-        [{ text: '🔔 Thông báo' }, { text: '🧹 Clear' }],
-        [{ text: '📜 Lịch sử' }, { text: '⚙️ Cài đặt' }, { text: '❓ Trợ giúp' }],
+        [{ text: '🔔 Thông báo' }, { text: '📜 Lịch sử' }],
+        [{ text: '⚙️ Cài đặt' }, { text: '❓ Trợ giúp' }],
       ],
       resize_keyboard: true,
       is_persistent: true,
@@ -72,14 +71,9 @@ describe('bot formatting', () => {
     expect(message).toContain('Trạng thái: warning');
   });
 
-  it('keeps clear scoped to conversation state', () => {
-    expect(clearConversationText()).toContain('Đã clear hội thoại hiện tại');
-    expect(clearConversationText()).toContain('Key và cài đặt vẫn được giữ');
-  });
-
   it('formats help, missing key, key, and settings text', () => {
     expect(formatHelpText()).toContain('/quota');
-    expect(formatHelpText()).toContain('/clear');
+    expect(formatHelpText()).not.toContain('/clear');
     expect(formatHelpText()).toContain('/threshold_custom');
     expect(noKeyText()).toContain('/key_change');
     expect(formatKeyText({ keyMasked: 'sk-a...test' })).toContain('sk-a...test');

@@ -2,7 +2,6 @@ import type { KeyUsageSummary } from '../shared/types.js';
 import { PublicApiError } from './clientApi.js';
 import type { BotDatabase, BotUserIdentity } from './database.js';
 import {
-  clearConversationText,
   formatHelpText,
   formatHistoryText,
   formatKeyText,
@@ -105,10 +104,6 @@ export class GoCinemaAssistantBot {
       case '/threshold_custom':
         this.deps.db.setUserState(telegramUserId, 'awaiting_threshold');
         await this.deps.telegram.sendMessage(chatId, 'Gửi ngưỡng cảnh báo quota từ 1 đến 100. Dùng /cancel để hủy.', { reply_markup: menuMarkup() });
-        break;
-      case '/clear':
-        this.deps.db.clearUserState(telegramUserId);
-        await this.deps.telegram.sendMessage(chatId, clearConversationText(), { reply_markup: menuMarkup() });
         break;
       case '/cancel':
         this.deps.db.clearUserState(telegramUserId);

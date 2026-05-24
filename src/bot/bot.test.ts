@@ -123,16 +123,16 @@ describe('GoCinemaAssistantBot', () => {
     expect(telegram.messages.at(-1)?.text).toContain('sk-a...test');
   });
 
-  it('clears pending conversation state without deleting the saved key', async () => {
+  it('cancels pending conversation state without deleting the saved key', async () => {
     const { app, db, telegram } = makeApp();
     db.saveUserKey({ id: 123, username: 'alice' }, 99, 'sk-secret', 'sk-s...cret');
 
     await app.handleUpdate(message('/key_change'));
-    await app.handleUpdate(message('/clear'));
+    await app.handleUpdate(message('/cancel'));
 
     expect(db.getUserState(123)).toBeNull();
     expect(db.getUser(123)?.apiKey).toBe('sk-secret');
-    expect(telegram.messages.at(-1)?.text).toContain('Đã clear hội thoại hiện tại');
+    expect(telegram.messages.at(-1)?.text).toContain('Đã hủy thao tác đang nhập');
   });
 
   it('handles settings, alert toggles, and threshold shortcuts', async () => {

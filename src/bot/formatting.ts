@@ -10,8 +10,8 @@ export function menuMarkup(): ReplyKeyboardMarkup {
   return {
     keyboard: [
       [{ text: '📊 Quota' }, { text: '🔑 Key' }],
-      [{ text: '🔔 Thông báo' }, { text: '🧹 Clear' }],
-      [{ text: '📜 Lịch sử' }, { text: '⚙️ Cài đặt' }, { text: '❓ Trợ giúp' }],
+      [{ text: '🔔 Thông báo' }, { text: '📜 Lịch sử' }],
+      [{ text: '⚙️ Cài đặt' }, { text: '❓ Trợ giúp' }],
     ],
     resize_keyboard: true,
     is_persistent: true,
@@ -43,10 +43,6 @@ export function noKeyText(): string {
   ].join('\n');
 }
 
-export function clearConversationText(): string {
-  return 'Đã clear hội thoại hiện tại. Key và cài đặt vẫn được giữ.';
-}
-
 export function formatHelpText(): string {
   return [
     'GoCinema Assistant',
@@ -59,7 +55,6 @@ export function formatHelpText(): string {
     '/alerts_off - tắt thông báo quota',
     '/threshold_custom - nhập ngưỡng cảnh báo tùy chọn',
     '/history - lịch sử kiểm tra',
-    '/clear - clear hội thoại hiện tại',
     '/settings - cài đặt',
     '/cancel - hủy thao tác đang nhập',
     '',

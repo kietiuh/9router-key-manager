@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the GoCinema Assistant Telegram bot worker with quota checks, key management, alerts, history, clear/reset, docs, and deployment scaffolding.
+**Goal:** Build the GoCinema Assistant Telegram bot worker with quota checks, key management, alerts, history, cancel/reset, docs, and deployment scaffolding.
 
 **Architecture:** Add a separate TypeScript bot entrypoint under `src/bot`. The bot uses Telegram long polling, stores state in the existing manager SQLite database, and checks quota through `POST /api/public/key-check` on the local key-manager API. This keeps quota semantics identical to the current public `/check` page while allowing the bot service to restart independently.
 
@@ -28,7 +28,7 @@
 
 ### Task 1: Formatting And Commands
 
-- [x] Write failing tests for menu markup, command list, quota dashboard text, help text, and clear text.
+- [x] Write failing tests for menu markup, command list, quota dashboard text, help text, and cancel text.
 - [x] Implement `src/bot/formatting.ts` and command metadata in `src/bot/telegram.ts`.
 - [x] Run `npm test -- src/bot/formatting.test.ts src/bot/telegram.test.ts`.
 
@@ -46,7 +46,7 @@
 
 ### Task 4: Bot Routing
 
-- [x] Write failing tests for `/start`, no-key quota guidance, key replacement, `/clear`, `/history`, `/settings`, alert toggles, and command aliases.
+- [x] Write failing tests for `/start`, no-key quota guidance, key replacement, `/cancel`, `/history`, `/settings`, alert toggles, and command aliases.
 - [x] Implement `src/bot/bot.ts`.
 - [x] Run `npm test -- src/bot/bot.test.ts`.
 

@@ -21,7 +21,7 @@ This release includes:
 - Quota check history.
 - Opt-in quota alerts with threshold settings.
 - A background alert loop.
-- Conversation clear/reset command.
+- Conversation cancel/reset command.
 
 Out of scope:
 
@@ -46,7 +46,6 @@ Main menu:
 - `📊 Quota`
 - `🔑 Key`
 - `🔔 Thông báo`
-- `🧹 Clear`
 - `📜 Lịch sử`
 - `⚙️ Cài đặt`
 - `❓ Trợ giúp`
@@ -66,7 +65,6 @@ Slash commands:
 - `/threshold_5`
 - `/threshold_custom`
 - `/history`
-- `/clear`
 - `/settings`
 - `/cancel`
 - `/help`
@@ -92,11 +90,11 @@ API keys are stored in plain text so the bot can check quota and send alerts. Th
 - Public API 404/401 errors are shown as invalid or unknown key messages.
 - Network/API errors are logged and shown only for manual checks.
 - Background alert errors are logged and recorded but not sent to users.
-- `/clear` resets pending conversation state without deleting the saved key.
+- `/cancel` resets pending conversation state without deleting the saved key.
 
 ## Testing
 
-Unit tests cover formatting, database migrations, command registration, routing, key flow, quota checks, clear behavior, history, settings, and alert duplicate prevention.
+Unit tests cover formatting, database migrations, command registration, routing, key flow, quota checks, cancel behavior, history, settings, and alert duplicate prevention.
 
 ## Deployment
 

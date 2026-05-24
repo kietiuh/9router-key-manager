@@ -118,7 +118,7 @@ Name: GoCinema Assistant
 Username: @gocinema_assistant_bot
 ```
 
-The bot is the main client assistant surface. The first release supports key management, quota checks, quota history, opt-in quota alerts, alert thresholds, settings/help, and `/clear` to reset the current conversation state while keeping the saved key and settings.
+The bot is the main client assistant surface. The first release supports key management, quota checks, quota history, opt-in quota alerts, alert thresholds, settings/help, and `/cancel` to stop the current pending input while keeping the saved key and settings.
 
 The bot runs separately from the API/web service:
 
@@ -137,7 +137,7 @@ Slash commands registered with Telegram:
 
 ```text
 /start /quota /check /refresh /key /key_change /alerts_on /alerts_off
-/threshold_20 /threshold_10 /threshold_5 /threshold_custom /history /clear /settings /cancel /help
+/threshold_20 /threshold_10 /threshold_5 /threshold_custom /history /settings /cancel /help
 ```
 
 Deploy scaffold: [`deploy/systemd/gocinema-assistant-bot.service.example`](deploy/systemd/gocinema-assistant-bot.service.example).
