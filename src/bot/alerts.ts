@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { KeyUsageSummary } from '../shared/types.js';
 import type { KeyChecker, TelegramSender } from './bot.js';
 import type { AlertCategory, BotDatabase } from './database.js';
-import { menuMarkup } from './formatting.js';
+import { formatLocalDateTime, formatStatusLabel, menuMarkup } from './formatting.js';
 
 export function keyFingerprint(apiKey: string): string {
   return crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 32);
@@ -80,15 +80,12 @@ function formatAlertMessage(summary: KeyUsageSummary, thresholdPercent: number, 
   return [
     '🔔 Cảnh báo quota',
     `${summary.name} (${summary.keyMasked})`,
-    `Quota còn ${remaining}, ngưỡng cảnh báo ${thresholdPercent}%.`,
-    `Trạng thái: ${summary.status} - ${summary.statusReason}`,
-    `Reset: ${reset}`,
+    '',
+    `Còn lại: ${remaining}`,
+    `Ngưỡng cảnh báo: ${thresholdPercent}%`,
+    `Tình trạng: ${formatStatusLabel(summary.status)}`,
+    `Reset lúc: ${reset}`,
     '',
     'Dùng /quota để xem chi tiết hoặc /alerts_off để tắt thông báo.',
   ].join('\n');
-}
-
-function formatLocalDateTime(iso: string, timezoneOffsetHours: number): string {
-  const shifted = new Date(Date.parse(iso) + timezoneOffsetHours * 60 * 60 * 1000);
-  return `${shifted.toISOString().slice(0, 16).replace('T', ' ')} UTC${timezoneOffsetHours >= 0 ? '+' : ''}${timezoneOffsetHours}`;
 }

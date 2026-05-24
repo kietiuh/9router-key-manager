@@ -2,12 +2,12 @@ import type { KeyUsageSummary } from '../shared/types.js';
 import { PublicApiError } from './clientApi.js';
 import type { BotDatabase, BotUserIdentity } from './database.js';
 import {
-  clearConversationText,
   formatHelpText,
   formatHistoryText,
   formatKeyText,
   formatQuotaMessage,
   formatSettingsText,
+  formatUnknownText,
   menuMarkup,
   noKeyText,
 } from './formatting.js';
@@ -65,7 +65,7 @@ export class GoCinemaAssistantBot {
 
     switch (command ?? text) {
       case '/start':
-        await this.sendMenu(chatId);
+        await this.handleStart(telegramUserId, chatId);
         break;
       case '/quota':
       case '/check':
@@ -77,7 +77,7 @@ export class GoCinemaAssistantBot {
         break;
       case '/key_change':
         this.deps.db.setUserState(telegramUserId, 'awaiting_key');
-        await this.deps.telegram.sendMessage(chatId, 'Gửi GoCinema API key mới. Dùng /cancel để hủy.', { reply_markup: menuMarkup() });
+        await this.deps.telegram.sendMessage(chatId, 'Gửi GoCinema API key mới.\nDùng /cancel để hủy thao tác này.', { reply_markup: menuMarkup() });
         break;
       case '/history':
         await this.deps.telegram.sendMessage(chatId, formatHistoryText(this.deps.db.recentQuotaChecks(telegramUserId, 5), this.deps.timezoneOffsetHours), { reply_markup: menuMarkup() });
@@ -106,10 +106,6 @@ export class GoCinemaAssistantBot {
         this.deps.db.setUserState(telegramUserId, 'awaiting_threshold');
         await this.deps.telegram.sendMessage(chatId, 'Gửi ngưỡng cảnh báo quota từ 1 đến 100. Dùng /cancel để hủy.', { reply_markup: menuMarkup() });
         break;
-      case '/clear':
-        this.deps.db.clearUserState(telegramUserId);
-        await this.deps.telegram.sendMessage(chatId, clearConversationText(), { reply_markup: menuMarkup() });
-        break;
       case '/cancel':
         this.deps.db.clearUserState(telegramUserId);
         await this.deps.telegram.sendMessage(chatId, 'Đã hủy thao tác đang nhập.', { reply_markup: menuMarkup() });
@@ -118,13 +114,22 @@ export class GoCinemaAssistantBot {
         await this.deps.telegram.sendMessage(chatId, formatHelpText(), { reply_markup: menuMarkup() });
         break;
       default:
-        await this.deps.telegram.sendMessage(chatId, formatHelpText(), { reply_markup: menuMarkup() });
+        await this.deps.telegram.sendMessage(chatId, command ? formatHelpText() : formatUnknownText(), { reply_markup: menuMarkup() });
         break;
     }
   }
 
+  private async handleStart(telegramUserId: number, chatId: number): Promise<void> {
+    const user = this.deps.db.getUser(telegramUserId);
+    if (user?.apiKey) {
+      await this.handleQuota(telegramUserId, chatId);
+      return;
+    }
+    await this.sendMenu(chatId);
+  }
+
   private async sendMenu(chatId: number): Promise<void> {
-    await this.deps.telegram.sendMessage(chatId, 'GoCinema Assistant\nChọn thao tác bên dưới hoặc gõ / để xem lệnh.', { reply_markup: menuMarkup() });
+    await this.deps.telegram.sendMessage(chatId, 'GoCinema Assistant\nChọn thao tác bên dưới. Nếu chưa lưu key, gõ /key_change để bắt đầu.', { reply_markup: menuMarkup() });
   }
 
   private async handleIncomingKey(identity: BotUserIdentity, chatId: number, apiKey: string): Promise<void> {

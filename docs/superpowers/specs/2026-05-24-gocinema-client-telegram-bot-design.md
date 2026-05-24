@@ -21,7 +21,7 @@ This release includes:
 - Quota check history.
 - Opt-in quota alerts with threshold settings.
 - A background alert loop.
-- Conversation clear/reset command.
+- Conversation cancel/reset command.
 
 Out of scope:
 
@@ -46,7 +46,6 @@ Main menu:
 - `📊 Quota`
 - `🔑 Key`
 - `🔔 Thông báo`
-- `🧹 Clear`
 - `📜 Lịch sử`
 - `⚙️ Cài đặt`
 - `❓ Trợ giúp`
@@ -66,12 +65,13 @@ Slash commands:
 - `/threshold_5`
 - `/threshold_custom`
 - `/history`
-- `/clear`
 - `/settings`
 - `/cancel`
 - `/help`
 
 The menu is module-oriented: quota, key, alerts, history, settings, and help are independent handlers. Future modules can be added by registering a new menu item and command handler without changing existing quota flows.
+
+Quota and alert replies should be written for end users, not operators: hide raw status codes and backend reasons like `ok` or `Healthy`, use Vietnamese labels such as `Đang hoạt động` or `Sắp hết quota`, and display times in compact Vietnam time (`HH:mm dd/MM/yyyy`). If `/start` is used by a user who already saved a key, show quota immediately. Unknown free-form text should receive a short fallback that points back to the menu or `/help`.
 
 ## Data Model
 
@@ -92,11 +92,11 @@ API keys are stored in plain text so the bot can check quota and send alerts. Th
 - Public API 404/401 errors are shown as invalid or unknown key messages.
 - Network/API errors are logged and shown only for manual checks.
 - Background alert errors are logged and recorded but not sent to users.
-- `/clear` resets pending conversation state without deleting the saved key.
+- `/cancel` resets pending conversation state without deleting the saved key.
 
 ## Testing
 
-Unit tests cover formatting, database migrations, command registration, routing, key flow, quota checks, clear behavior, history, settings, and alert duplicate prevention.
+Unit tests cover formatting, database migrations, command registration, routing, key flow, quota checks, cancel behavior, history, settings, and alert duplicate prevention.
 
 ## Deployment
 
