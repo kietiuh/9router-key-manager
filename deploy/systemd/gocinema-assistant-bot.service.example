@@ -5,13 +5,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/9router-key-manager
-EnvironmentFile=/opt/9router-key-manager/.env
-ExecStart=/usr/bin/npm run start:bot
+WorkingDirectory=/root/.openclaw/workspace/code/github/9router-key-manager
+Environment=NODE_ENV=production
+Environment=BOT_PUBLIC_API_BASE_URL=http://127.0.0.1:3000
+Environment=KEY_MANAGER_DB=/root/.local/state/9router-key-manager/manager.sqlite
+EnvironmentFile=-/etc/9router-key-manager.env
+ExecStart=/root/.openclaw/workspace/code/github/9router-key-manager/node_modules/.bin/tsx src/bot/index.ts
 Restart=always
 RestartSec=5
-User=www-data
-Group=www-data
 
 [Install]
 WantedBy=multi-user.target

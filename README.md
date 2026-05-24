@@ -142,6 +142,8 @@ Slash commands registered with Telegram:
 
 Deploy scaffold: [`deploy/systemd/gocinema-assistant-bot.service.example`](deploy/systemd/gocinema-assistant-bot.service.example).
 
+Production expects `TELEGRAM_BOT_TOKEN` in `/etc/9router-key-manager.env`, next to any existing key-manager environment overrides. The token is not committed.
+
 ## Concepts
 
 ### Usage window
