@@ -10,11 +10,10 @@ import { openDb } from './db/index.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
-import { readApiKeys, readUsageHistorySince, usageSourceStatus } from './parsers/reader.js';
-import { default9routerDir, dbJsonPath, usageJsonPath } from './parsers/paths.js';
+import { readApiKeys, readUsageHistorySince } from './parsers/reader.js';
 import { summarizeKeyUsage } from './services/usage.js';
 import { ingestUsageHistory, latestStoredUsageTimestamp, readStoredUsageForKeys, recordSyntheticUsage } from './services/usageStore.js';
-import { startOfVietnamDayUtc, resolveWindow, VN_TZ_LABEL } from './utils/time.js';
+import { startOfVietnamDayUtc, resolveWindow } from './utils/time.js';
 import { runWatcherOnce, startWatcher } from './services/watcher.js';
 import { getModelRewriteConfig, rollbackModelRewriteSelection, saveModelRewriteConfig, selectModelRewriteTargets, type RewriteTargetPlan } from './services/modelRewrite.js';
 import { applyRewritePlan, parseModelRewriteRequest } from './services/modelRewriteProxy.js';
@@ -27,6 +26,7 @@ import { imageProxyNeedsServerKey } from '../shared/imageProxy.js';
 import { buildQuotaErrorBody, evaluateQuotaInterceptor } from './services/quotaInterceptor.js';
 import { buildKeyExpiredErrorBody, evaluateKeyAccessInterceptor } from './services/keyAccessInterceptor.js';
 import { maybeUnlockQuotaLockout } from './services/quotaUnlock.js';
+import { buildConfigStatus } from './configStatus.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 3039);
@@ -219,7 +219,7 @@ function extractImageBase64(json: any) {
 }
 function publicImageFilename() { return `gocinema-image-${new Date().toISOString().replace(/[:.]/g, '-')}.png`; }
 function maskedUser(req: any) { const auth = String(req.headers?.authorization ?? ''); if (auth) return crypto.createHash('sha256').update(auth).digest('hex').slice(0, 12); return String(req.ip ?? 'unknown'); }
-function configStatus() { const nineRouterDir = default9routerDir(); const dbPath = dbJsonPath(nineRouterDir); const usagePath = usageJsonPath(nineRouterDir); const errors: string[] = []; const dbJsonExists = fs.existsSync(dbPath); const usageJsonExists = fs.existsSync(usagePath); const source = usageSourceStatus(nineRouterDir); if (!dbJsonExists) errors.push(`Missing 9router db.json at ${dbPath}`); if (!usageJsonExists) errors.push(`Missing 9router usage.json at ${usagePath}`); return { ok: errors.length === 0, nineRouterDir, dbJsonPath: dbPath, usageJsonPath: usagePath, dataSqlitePath: source.dataSqlitePath, usageSource: source.usageSource, dbJsonExists, usageJsonExists, dataSqliteExists: source.dataSqliteExists, managerDbPath: process.env.KEY_MANAGER_DB ?? '~/.local/state/9router-key-manager/manager.sqlite', hardDisable: process.env.HARD_DISABLE === 'true', timezone: VN_TZ_LABEL, errors }; }
+function configStatus() { return buildConfigStatus(); }
 
 app.get('/api/health', async () => ({ ok: true, service: '9router-key-manager' }));
 app.get('/api/auth/status', async (req) => ({ authenticated: isAuthed(req) }));
