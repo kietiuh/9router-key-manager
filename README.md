@@ -42,6 +42,7 @@ npm run build
 
 - Public 9router lag mitigation and VPS rebuild steps: [`docs/ops/9router-public-lag-mitigation.md`](docs/ops/9router-public-lag-mitigation.md).
 - Traffic queue and upstream generation timeout policy: [`docs/ops/9router-traffic-timeouts.md`](docs/ops/9router-traffic-timeouts.md).
+- Single-VPS scale hardening, storage maintenance, and local-only listen policy: [`docs/ops/9router-scale-hardening.md`](docs/ops/9router-scale-hardening.md).
 
 Run the 9router observability mitigation in dry-run mode:
 
@@ -55,6 +56,18 @@ Apply it during an approved production window:
 npm run ops:mitigate-9router-observability -- --apply
 ```
 
+Dry-run key-manager storage maintenance:
+
+```bash
+npm run ops:maintain-key-manager-storage
+```
+
+Apply it during a short production maintenance window:
+
+```bash
+npm run ops:maintain-key-manager-storage -- --apply
+```
+
 When production routing, service paths, ports, 9router versions, or mitigation settings change, update the matching runbook in the same commit.
 
 ## Config
@@ -66,10 +79,12 @@ Important variables:
 - `ADMIN_PASSWORD`: required admin password; the server refuses to start without it.
 - `NINE_ROUTER_DIR`: path containing 9router `db.json` and `usage.json`; defaults to `~/.9router`.
 - `KEY_MANAGER_DB`: SQLite path for manager metadata; defaults to `~/.local/state/9router-key-manager/manager.sqlite`.
+- `API_KEY_CACHE_TTL_MS`: short-lived cache for API-key lookups on the `/v1/*` hot path; defaults to `5000`.
 - `HARD_DISABLE`: set to `true` only when you want quota breaches with action `disable` to modify 9router `db.json`.
 - `CORS_ORIGINS`: comma-separated allowed UI origins; defaults to local Vite origins.
 - `COOKIE_SECURE`: override secure-cookie behavior; defaults to secure in production only.
 - `NINE_ROUTER_UPSTREAM`: 9router API base URL; production uses `http://127.0.0.1:20128`.
+- `TRAFFIC_LOG_LIMITER_SNAPSHOT`: set to `true` only when debugging queue state on successful proxy requests; defaults to compact success logs.
 - `IMAGE_PROXY_API_KEY`: server-side image upstream key for `authMode: server-key`; never expose or commit it.
 - `TELEGRAM_BOT_TOKEN`: Telegram token for GoCinema Assistant; never expose or commit it.
 
