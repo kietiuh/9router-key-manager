@@ -27,6 +27,8 @@ import { buildQuotaErrorBody, evaluateQuotaInterceptor } from './services/quotaI
 import { buildKeyExpiredErrorBody, evaluateKeyAccessInterceptor } from './services/keyAccessInterceptor.js';
 import { maybeUnlockQuotaLockout } from './services/quotaUnlock.js';
 import { buildConfigStatus } from './configStatus.js';
+import { createApiKeyCache } from './services/apiKeyCache.js';
+import { buildTrafficLogMeta } from './services/trafficLog.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 3039);
@@ -40,6 +42,7 @@ const nineRouterUpstream = (process.env.NINE_ROUTER_UPSTREAM ?? 'http://127.0.0.
 const trafficLimiter = new TrafficLimiter(readTrafficLimitConfig(process.env));
 const app = Fastify({ logger: true });
 const db = openDb();
+const includeLimiterInSuccessLogs = process.env.TRAFFIC_LOG_LIMITER_SNAPSHOT === 'true';
 const publicImageDir = process.env.PUBLIC_IMAGE_DIR ?? path.join(os.homedir(), '.local/state/9router-key-manager/public-images');
 const publicImageTtlMs = Number(process.env.PUBLIC_IMAGE_TTL_HOURS ?? 24) * 60 * 60 * 1000;
 fs.mkdirSync(publicImageDir, { recursive: true, mode: 0o700 });
@@ -72,6 +75,7 @@ function isAuthed(req: any) { return req.unsignCookie(req.cookies?.admin_session
 async function requireAuth(req: any, reply: any) { if (!isAuthed(req)) return reply.code(401).send({ error: 'unauthorized' }); }
 
 function ensurePolicies() { const keys = readApiKeys(); const defaultStart = startOfVietnamDayUtc(); const insert = db.prepare('INSERT OR IGNORE INTO key_policies (key_id, name, window_start, reset_policy) VALUES (?, ?, ?, ?)'); for (const key of keys) insert.run(key.id, key.name, defaultStart, 'daily'); return keys; }
+const apiKeyCache = createApiKeyCache({ load: ensurePolicies, ttlMs: Number(process.env.API_KEY_CACHE_TTL_MS ?? 5000) });
 function resolvedPolicies() { const events = db.prepare('SELECT key_id, multiplier, effective_at FROM usage_multiplier_events ORDER BY effective_at ASC, id ASC').all() as Array<{ key_id: string; multiplier: number; effective_at: string }>; const byKey = new Map<string, Array<{ multiplier: number; effective_at: string }>>(); for (const e of events) { const arr = byKey.get(e.key_id) ?? []; arr.push({ multiplier: Number(e.multiplier), effective_at: e.effective_at }); byKey.set(e.key_id, arr); } return (db.prepare('SELECT key_id, name, window_start, window_end, reset_policy, token_limit, image_daily_limit, expires_at, action_on_limit, usage_multiplier, usage_multiplier_effective_at FROM key_policies').all() as any[]).map(p => { const w = resolveWindow({ window_start: p.window_start, window_end: p.window_end, reset_policy: p.reset_policy }); const imageDailyUsed = dailyImageUsageForKey(p.key_id); return { ...p, image_daily_used: imageDailyUsed, window_start: w.windowStart, window_end: w.windowEnd, reset_policy: w.resetPolicy, usage_multiplier_events: byKey.get(p.key_id) ?? [] }; }); }
 const usageRefreshMinIntervalMs = Number(process.env.USAGE_REFRESH_MIN_INTERVAL_MS ?? 30_000);
 const usageRefreshOverlapMs = Number(process.env.USAGE_REFRESH_OVERLAP_MS ?? 5 * 60_000);
@@ -174,8 +178,8 @@ function imageHistoryForKey(keyId: string) {
   return { images: rows.map(r => ({ id: r.id, model: r.model, size: r.size, promptPreview: r.prompt_preview, bytes: r.bytes, estimatedTotalTokens: r.estimated_total_tokens, createdAt: r.created_at, expiresAt: r.expires_at })) };
 }
 
-function findPublicKey(key: string) { const clean = key.trim(); return ensurePolicies().find(k => k.key === clean && k.isActive !== false); }
-function findPublicKeyAny(key: string) { const clean = key.trim(); return ensurePolicies().find(k => k.key === clean); }
+function findPublicKey(key: string) { const clean = key.trim(); return apiKeyCache.getKeys().find(k => k.key === clean && k.isActive !== false); }
+function findPublicKeyAny(key: string) { const clean = key.trim(); return apiKeyCache.getKeys().find(k => k.key === clean); }
 function autoDisabledReason(keyId: string): string | null {
   const row = db.prepare('SELECT reason FROM auto_disabled_keys WHERE key_id = ? ORDER BY disabled_for_window_start DESC LIMIT 1').get(keyId) as { reason?: string } | undefined;
   return row?.reason ?? null;
@@ -421,10 +425,7 @@ app.register(async proxyRoutes => {
       ? (Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body == null ? '' : typeof req.body === 'string' ? req.body : JSON.stringify(req.body)))
       : undefined;
 
-    const lookupKey = (token: string) => {
-      const match = ensurePolicies().find(k => k.key === token.trim());
-      return match ? { id: match.id, isActive: match.isActive } : undefined;
-    };
+    const lookupKey = (token: string) => apiKeyCache.lookup(token);
     const keyAccess = evaluateKeyAccessInterceptor({
       db,
       authHeader: req.headers.authorization,
@@ -510,7 +511,21 @@ app.register(async proxyRoutes => {
         log: (data, message) => req.log.info(data, message),
       });
       lease = result.lease;
-      req.log.info({ model: result.model, userId, bodyBytes: result.bodyBytes, estimatedInputTokens: result.estimatedInputTokens, isLargeContext: result.isLargeContext, queuedMs: result.queuedMs, upstreamMs: result.upstreamMs, upstreamTimeoutMs: result.timeoutMs, totalMs: Date.now() - totalStarted, upstreamStatus: result.upstream.status, attemptIndex: result.attemptIndex, attemptCount: result.attemptCount, limiter: trafficLimiter.snapshot() }, 'traffic proxied request');
+      req.log.info(buildTrafficLogMeta({
+        model: result.model,
+        userId,
+        bodyBytes: result.bodyBytes,
+        estimatedInputTokens: result.estimatedInputTokens,
+        isLargeContext: result.isLargeContext,
+        queuedMs: result.queuedMs,
+        upstreamMs: result.upstreamMs,
+        upstreamTimeoutMs: result.timeoutMs,
+        totalMs: Date.now() - totalStarted,
+        upstreamStatus: result.upstream.status,
+        attemptIndex: result.attemptIndex,
+        attemptCount: result.attemptCount,
+        limiter: trafficLimiter.snapshot(),
+      }, { includeLimiter: includeLimiterInSuccessLogs }), 'traffic proxied request');
       reply.header('x-queue-time-ms', String(result.queuedMs));
       reply.header('x-upstream-time-ms', String(result.upstreamMs));
       reply.code(result.upstream.status);
@@ -594,11 +609,12 @@ app.register(async protectedRoutes => {
     })();
     db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'policy.update', JSON.stringify(body));
     maybeUnlockQuotaAfterPolicyChange(keyId);
+    apiKeyCache.invalidate();
     invalidateUsageSummaryCache();
     return mutationOk(keyId);
   });
-  protectedRoutes.post('/api/keys/:keyId/reset-window', async (req, reply) => { const { keyId } = req.params as { keyId: string }; const current = db.prepare('SELECT reset_policy FROM key_policies WHERE key_id = ?').get(keyId) as any; if (!current) return reply.code(404).send({ error: 'key policy not found' }); if (current.reset_policy === 'daily' || current.reset_policy === 'monthly') return reply.code(409).send({ error: `reset-window is only available for manual/custom policies; ${current.reset_policy} windows reset automatically` }); const windowStart = new Date().toISOString(); db.prepare('UPDATE key_policies SET window_start = ?, window_end = NULL, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?').run(windowStart, keyId); db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'window.reset', windowStart); invalidateUsageSummaryCache(); return mutationOk(keyId); });
-  protectedRoutes.post('/api/watcher/run', async () => runWatcherOnce(db, { hardDisable: process.env.HARD_DISABLE === 'true' }));
+  protectedRoutes.post('/api/keys/:keyId/reset-window', async (req, reply) => { const { keyId } = req.params as { keyId: string }; const current = db.prepare('SELECT reset_policy FROM key_policies WHERE key_id = ?').get(keyId) as any; if (!current) return reply.code(404).send({ error: 'key policy not found' }); if (current.reset_policy === 'daily' || current.reset_policy === 'monthly') return reply.code(409).send({ error: `reset-window is only available for manual/custom policies; ${current.reset_policy} windows reset automatically` }); const windowStart = new Date().toISOString(); db.prepare('UPDATE key_policies SET window_start = ?, window_end = NULL, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?').run(windowStart, keyId); db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(keyId, 'window.reset', windowStart); apiKeyCache.invalidate(); invalidateUsageSummaryCache(); return mutationOk(keyId); });
+  protectedRoutes.post('/api/watcher/run', async () => { const out = runWatcherOnce(db, { hardDisable: process.env.HARD_DISABLE === 'true' }); apiKeyCache.invalidate(); return out; });
   protectedRoutes.get('/api/audit', async () => db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT 200').all());
 });
 

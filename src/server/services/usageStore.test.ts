@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { migrate } from '../db/schema.js';
-import { ingestUsageHistory, latestStoredUsageTimestamp, readStoredUsage, readStoredUsageForKeys, recordSyntheticUsage } from './usageStore.js';
+import { ingestUsageHistory, latestStoredUsageTimestamp, readStoredUsage, readStoredUsageForKeys, recordSyntheticUsage, usageSignature } from './usageStore.js';
 
 function db() { const d = new Database(':memory:'); migrate(d); return d; }
 
@@ -20,6 +20,17 @@ describe('usageStore', () => {
     const rows = [{ apiKey: 'sk-a', model: 'm', timestamp: '2026-05-08T00:00:00.000Z', tokens: { prompt_tokens: 3, completion_tokens: 4 } }];
     expect(ingestUsageHistory(d, rows)).toBe(1);
     expect(ingestUsageHistory(d, rows)).toBe(0);
+    expect(readStoredUsage(d)).toHaveLength(1);
+  });
+
+  it('dedupes logical usage rows even when rolling cost changes', () => {
+    const d = db();
+    const first = { apiKey: 'sk-a', provider: 'p', connectionId: 'c', model: 'm', timestamp: '2026-05-08T00:00:00.000Z', cost: 0.1, tokens: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 } };
+    const second = { ...first, cost: 0.2 };
+
+    expect(usageSignature(first)).toBe(usageSignature(second));
+    expect(ingestUsageHistory(d, [first])).toBe(1);
+    expect(ingestUsageHistory(d, [second])).toBe(0);
     expect(readStoredUsage(d)).toHaveLength(1);
   });
 

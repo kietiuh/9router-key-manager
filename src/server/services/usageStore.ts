@@ -16,8 +16,7 @@ export function usageSignature(r: UsageRecord): string {
     r.model ?? '',
     t.prompt_tokens ?? 0,
     t.completion_tokens ?? 0,
-    t.total_tokens ?? '',
-    r.cost ?? ''
+    t.total_tokens ?? ''
   ].join('|');
 }
 
