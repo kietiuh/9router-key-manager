@@ -31,6 +31,17 @@ describe('summarizeKeyUsage', () => {
     expect(out.duplicateTokens).toBe(120);
   });
 
+  it('dedupes rows when total tokens are implied by prompt and completion', () => {
+    const rows = [
+      { apiKey: 'sk-aaaaaaaaaaaaaaaa', provider: 'p', connectionId: 'c', model: 'm1', timestamp: '2026-05-02T00:00:00.000Z', tokens: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 }, cost: 0.1 } as any,
+      { apiKey: 'sk-aaaaaaaaaaaaaaaa', provider: 'p', connectionId: 'c', model: 'm1', timestamp: '2026-05-02T00:00:00.000Z', tokens: { prompt_tokens: 100, completion_tokens: 20 }, cost: 0.2 } as any
+    ];
+    const out = summarizeKeyUsage([keys[0]], rows, [{ key_id: 'a', window_start: '2026-05-01T00:00:00.000Z' }])[0];
+    expect(out.total).toBe(120);
+    expect(out.duplicateRequests).toBe(1);
+    expect(out.duplicateTokens).toBe(120);
+  });
+
   it('applies multiplier only from the effective timestamp to prompt and completion', () => {
     const rows = [
       { apiKey: 'sk-aaaaaaaaaaaaaaaa', model: 'm1', timestamp: '2026-05-02T00:00:00.000Z', tokens: { prompt_tokens: 100, completion_tokens: 20 }, cost: 0.1 },

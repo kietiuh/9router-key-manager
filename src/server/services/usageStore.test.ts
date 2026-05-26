@@ -23,6 +23,17 @@ describe('usageStore', () => {
     expect(readStoredUsage(d)).toHaveLength(1);
   });
 
+  it('dedupes imports when total tokens are implied by prompt and completion', () => {
+    const d = db();
+    const first = { apiKey: 'sk-a', provider: 'p', connectionId: 'c', model: 'm', timestamp: '2026-05-08T00:00:00.000Z', tokens: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 } };
+    const second = { ...first, tokens: { prompt_tokens: 3, completion_tokens: 4 } };
+
+    expect(usageSignature(first)).toBe(usageSignature(second));
+    expect(ingestUsageHistory(d, [first])).toBe(1);
+    expect(ingestUsageHistory(d, [second])).toBe(0);
+    expect(readStoredUsage(d)).toHaveLength(1);
+  });
+
   it('dedupes logical usage rows even when rolling cost changes', () => {
     const d = db();
     const first = { apiKey: 'sk-a', provider: 'p', connectionId: 'c', model: 'm', timestamp: '2026-05-08T00:00:00.000Z', cost: 0.1, tokens: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 } };

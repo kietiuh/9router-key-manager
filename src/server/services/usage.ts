@@ -19,7 +19,7 @@ export type Policy = {
 
 function dedupeSignature(r: UsageRecord): string {
   const t = r.tokens ?? {};
-  return [r.apiKey ?? '', (r as any).provider ?? '', (r as any).connectionId ?? '', r.timestamp, r.model ?? '', t.prompt_tokens ?? 0, t.completion_tokens ?? 0, t.total_tokens ?? ''].join('|');
+  return [r.apiKey ?? '', (r as any).provider ?? '', (r as any).connectionId ?? '', r.timestamp, r.model ?? '', t.prompt_tokens ?? 0, t.completion_tokens ?? 0, tokenTotal(r)].join('|');
 }
 
 function richness(r: UsageRecord): number {
