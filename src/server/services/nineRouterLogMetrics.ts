@@ -1,8 +1,6 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import type { TrafficSummary } from '../../shared/types.js';
-
-const execFileAsync = promisify(execFile);
 
 type ParsedNineRouterEvent =
   | { kind: 'request'; path: string; model: string }
@@ -42,10 +40,9 @@ type ModelStats = {
 
 const REQUEST_RE = /📥\s+(GET|POST|PUT|PATCH|DELETE)\s+(\/v1\/\S+)\s+\|\s+([^|]+)/;
 const STREAM_RE = /\[STREAM\]\s+[^|]+\|\s+([^|]+)\|\s+(\d+)ms\s+\|\s+(.+)$/;
-const JOURNAL_LINE_LIMIT = 2000;
 
 export function nineRouterJournalArgs(since: string) {
-  return ['-u', '9router', '--since', since, '-n', String(JOURNAL_LINE_LIMIT), '-o', 'json', '--no-pager'];
+  return ['-u', '9router', '--since', since, '-o', 'json', '--no-pager'];
 }
 
 function cleanLine(line: string) {
@@ -196,8 +193,25 @@ export function buildNineRouterLogSummary(lines: JournalLine[], options: BuildSu
 }
 
 export async function readNineRouterJournalLines(since: string): Promise<JournalLine[]> {
-  const { stdout } = await execFileAsync('journalctl', nineRouterJournalArgs(since), { maxBuffer: 20 * 1024 * 1024 });
-  return stdout.split('\n').map(parseJournalJsonLine).filter((line): line is JournalLine => Boolean(line));
+  const child = spawn('journalctl', nineRouterJournalArgs(since), { stdio: ['ignore', 'pipe', 'pipe'] });
+  const lines: JournalLine[] = [];
+  let stderr = '';
+
+  const stdout = createInterface({ input: child.stdout });
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', chunk => { stderr += chunk; });
+
+  for await (const line of stdout) {
+    const parsed = parseJournalJsonLine(line);
+    if (parsed) lines.push(parsed);
+  }
+
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
+  if (exitCode !== 0) throw new Error((stderr.trim() || `journalctl exited with code ${exitCode}`).slice(0, 500));
+  return lines;
 }
 
 export function createNineRouterLogMetricsSampler(options = { windowMinutes: 120, bucketMinutes: 5, refreshMs: 5 * 60_000 }) {
