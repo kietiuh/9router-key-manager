@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildNineRouterLogSummary, parseJournalJsonLine, parseNineRouterLogLine } from './nineRouterLogMetrics.js';
+import { buildNineRouterLogSummary, nineRouterJournalArgs, parseJournalJsonLine, parseNineRouterLogLine } from './nineRouterLogMetrics.js';
 
 describe('nineRouterLogMetrics', () => {
   it('parses request and stream completion lines from 9router logs', () => {
@@ -52,5 +52,10 @@ describe('nineRouterLogMetrics', () => {
     expect(summary.models).toHaveLength(2);
     expect(summary.models.find(model => model.model === 'cx/gpt-5.5')).toMatchObject({ requestCount: 1, streamCount: 1 });
     expect(summary.models.find(model => model.model === 'gpt-5.5')).toMatchObject({ requestCount: 1, streamCount: 1 });
+  });
+
+  it('bounds journal reads to avoid buffering oversized service logs', () => {
+    expect(nineRouterJournalArgs('125 minutes ago')).toContain('-n');
+    expect(nineRouterJournalArgs('125 minutes ago')).toContain('2000');
   });
 });

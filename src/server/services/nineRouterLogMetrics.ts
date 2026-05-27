@@ -42,6 +42,12 @@ type ModelStats = {
 
 const REQUEST_RE = /📥\s+(GET|POST|PUT|PATCH|DELETE)\s+(\/v1\/\S+)\s+\|\s+([^|]+)/;
 const STREAM_RE = /\[STREAM\]\s+[^|]+\|\s+([^|]+)\|\s+(\d+)ms\s+\|\s+(.+)$/;
+const JOURNAL_LINE_LIMIT = 2000;
+
+export function nineRouterJournalArgs(since: string) {
+  return ['-u', '9router', '--since', since, '-n', String(JOURNAL_LINE_LIMIT), '-o', 'json', '--no-pager'];
+}
+
 function cleanLine(line: string) {
   return line.replaceAll(String.fromCharCode(27), '').replace(/\[[0-9;]*m/g, '').trim();
 }
@@ -190,7 +196,7 @@ export function buildNineRouterLogSummary(lines: JournalLine[], options: BuildSu
 }
 
 export async function readNineRouterJournalLines(since: string): Promise<JournalLine[]> {
-  const { stdout } = await execFileAsync('journalctl', ['-u', '9router', '--since', since, '-o', 'json', '--no-pager'], { maxBuffer: 20 * 1024 * 1024 });
+  const { stdout } = await execFileAsync('journalctl', nineRouterJournalArgs(since), { maxBuffer: 20 * 1024 * 1024 });
   return stdout.split('\n').map(parseJournalJsonLine).filter((line): line is JournalLine => Boolean(line));
 }
 
