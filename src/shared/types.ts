@@ -150,3 +150,51 @@ export type ImageProxyConfig = {
   authMode: 'pass-through' | 'server-key';
   modelOverride?: string;
 };
+
+export type TrafficLatencySummary = {
+  avg: number;
+  max: number;
+};
+
+export type TrafficSummaryBucket = {
+  bucketStart: string;
+  requestCount: number;
+  streamCount?: number;
+  errorCount: number;
+  timeoutCount: number;
+  largeContextCount: number;
+  avgQueuedMs: number;
+  avgUpstreamMs: number;
+  avgTotalMs: number;
+  maxUpstreamMs: number;
+};
+
+export type TrafficModelSummary = {
+  model: string;
+  requestCount: number;
+  streamCount?: number;
+  errorCount: number;
+  avgUpstreamMs: number;
+  maxUpstreamMs: number;
+};
+
+export type TrafficSummary = {
+  source?: 'key-manager-memory' | '9router-journal';
+  windowMinutes: number;
+  bucketMinutes: number;
+  generatedAt: string;
+  latestEventAt?: string | null;
+  error?: string | null;
+  requestCount: number;
+  streamCount?: number;
+  errorCount: number;
+  timeoutCount: number;
+  largeContextCount: number;
+  bodyBytes: number;
+  estimatedInputTokens: number;
+  queuedMs: TrafficLatencySummary;
+  upstreamMs: TrafficLatencySummary;
+  totalMs: TrafficLatencySummary;
+  buckets: TrafficSummaryBucket[];
+  models: TrafficModelSummary[];
+};

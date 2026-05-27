@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { KeyUsageSummary } from '../shared/types';
-import { ADMIN_FILTERS, getAdminTabCounts, isKeyAttention } from './adminTabs';
+import { ADMIN_FILTERS, ADMIN_TAB_IDS, adminTabLabel, getAdminTabCounts, isKeyAttention } from './adminTabs';
 
 function key(status: KeyUsageSummary['status'], isActive = true): KeyUsageSummary {
   return {
@@ -45,7 +45,13 @@ describe('admin tab helpers', () => {
     expect(counts.overview).toBe(1);
     expect(counts.keys).toBe(3);
     expect(counts.images).toBe(2);
+    expect(counts.traffic).toBeUndefined();
     expect(counts.routing).toBeUndefined();
+  });
+
+  it('adds a traffic monitoring tab with Vietnamese label', () => {
+    expect(ADMIN_TAB_IDS).toContain('traffic');
+    expect(adminTabLabel('traffic', 'vi')).toBe('Giám sát');
   });
 
   it('keeps key filters in their display order', () => {

@@ -95,3 +95,18 @@ pre { overflow: auto; background: #0c1324; padding: 10px; border-radius: 10px; }
 .imagePreviewDialog { width:min(920px, 100%); max-height:calc(100vh - 48px); overflow:auto; box-sizing:border-box; background:#121a2d; border:1px solid #354461; border-radius:18px; padding:18px; box-shadow:0 24px 90px #000b; }
 .imagePreviewDialog img { width:100%; max-height:70vh; object-fit:contain; border-radius:14px; border:1px solid #303d59; background:#0c1324; }
 .emptyPreview.small { min-height:120px; }
+.trafficPanel { display: grid; gap: 16px; }
+.panelHeader { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.trafficGrid { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.trafficColumns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.trafficBars { display: grid; gap: 10px; }
+.trafficBar { display: grid; grid-template-columns: 120px minmax(80px, 1fr) minmax(180px, auto); gap: 10px; align-items: center; }
+.trafficBar div { height: 10px; background: #29334a; border-radius: 999px; overflow: hidden; }
+.trafficBar b { display: block; height: 100%; background: #356cff; border-radius: 999px; }
+.trafficBar em { font-style: normal; color: #9aa7bd; font-size: 12px; }
+@media (max-width: 900px) { .trafficColumns { grid-template-columns: 1fr; } .trafficBar { grid-template-columns: 1fr; } .panelHeader { display: grid; } }
+.trafficStatsGrid { display:grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap:12px; }
+.trafficStatsGrid .card { display:grid; gap:6px; align-content:start; }
+.trafficStatsGrid .card strong { line-height:1.1; }
+.trafficStatsGrid .card small { display:block; margin-top:2px; line-height:1.35; color:#9aa7bd; }
+@media (max-width: 640px) { .trafficStatsGrid { grid-template-columns: 1fr; } }

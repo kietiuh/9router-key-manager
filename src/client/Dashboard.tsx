@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ConfigStatus, FinalFallbackConfig, ImageProxyConfig, ImageUsageSummary, KeyUsageSummary, ModelRewriteConfig } from '../shared/types';
+import type { ConfigStatus, FinalFallbackConfig, ImageProxyConfig, ImageUsageSummary, KeyUsageSummary, ModelRewriteConfig, TrafficSummary } from '../shared/types';
 import { api } from './api';
 import { fromVnInput } from './format';
 import { dict, type Filter, type Lang } from './i18n';
@@ -7,12 +7,19 @@ import { KeyDrawer } from './KeyDrawer';
 import { AdminKeysSection } from './AdminKeys';
 import { AttentionPanel, AdminSummaryCards, RecommendedFlow } from './AdminOverview';
 import { ImageUsagePanel } from './AdminImages';
+import { TrafficPanel } from './AdminTraffic';
 import { FinalFallbackPanel, ImageProxyPanel, ModelRewritePanel, type RewriteDraftGroup } from './AdminRouting';
 import { AdminTabBar } from './AdminTabBar';
 import type { Audit } from './adminTypes';
 import { DEFAULT_ADMIN_TAB, getAdminTabCounts, isKeyAttention, type AdminTab } from './adminTabs';
 
 const ADMIN_AUTO_REFRESH_MS = 60_000;
+const ADMIN_TAB_STORAGE_KEY = 'gocinema-admin-active-tab';
+
+function initialAdminTab(): AdminTab {
+  const stored = localStorage.getItem(ADMIN_TAB_STORAGE_KEY);
+  return stored === 'overview' || stored === 'keys' || stored === 'images' || stored === 'traffic' || stored === 'routing' ? stored : DEFAULT_ADMIN_TAB;
+}
 
 export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l: Lang) => void; onLogout: () => void }) {
   const t = dict[lang];
@@ -22,12 +29,19 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
   const [finalFallbackConfig, setFinalFallbackConfig] = useState<FinalFallbackConfig | null>(null);
   const [imageProxyConfig, setImageProxyConfig] = useState<ImageProxyConfig | null>(null);
   const [imageUsage, setImageUsage] = useState<ImageUsageSummary | null>(null);
+  const [trafficSummary, setTrafficSummary] = useState<TrafficSummary | null>(null);
+  const [trafficError, setTrafficError] = useState('');
   const [config, setConfig] = useState<ConfigStatus | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState('');
   const [selected, setSelected] = useState<KeyUsageSummary | null>(null);
   const [filter, setFilter] = useState<Filter>('attention');
-  const [activeTab, setActiveTab] = useState<AdminTab>(DEFAULT_ADMIN_TAB);
+  const [activeTab, setActiveTab] = useState<AdminTab>(initialAdminTab);
+
+  function changeTab(tab: AdminTab) {
+    localStorage.setItem(ADMIN_TAB_STORAGE_KEY, tab);
+    setActiveTab(tab);
+  }
 
   async function refresh() {
     try {
@@ -43,6 +57,12 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
       if (selected) setSelected(k.find(x => x.keyId === selected.keyId) ?? null);
     } catch (e: any) {
       setError(e.message ?? String(e));
+    }
+    try {
+      setTrafficError('');
+      setTrafficSummary(await api<TrafficSummary>('/api/traffic/summary'));
+    } catch (e: any) {
+      setTrafficError(e.message ?? String(e));
     }
   }
 
@@ -115,5 +135,5 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
     onLogout();
   }
 
-  return <main><header><div><h1>{t.title}</h1><p>{t.subtitle}</p></div><div className="headActions"><select value={lang} onChange={e => setLang(e.target.value as Lang)}><option value="vi">VI</option><option value="en">EN</option></select><button onClick={refresh}>{t.refresh}</button><button type="button" onClick={logout}>{t.logout}</button></div></header>{error && <pre className="error">{error}</pre>}{config && !config.ok && <section className="setup"><h2>{t.setup}</h2>{config.errors.map(e => <p key={e}>{e}</p>)}</section>}<section className="adminShell"><AdminTabBar active={activeTab} counts={tabCounts} lang={lang} onChange={setActiveTab} /><div className="adminTabPanel" role="tabpanel">{activeTab === 'overview' && <><AdminSummaryCards config={config} keys={keys} lang={lang} totals={totals} /><RecommendedFlow lang={lang} /><AttentionPanel config={config} keys={keys} lang={lang} onSelect={setSelected} /></>}{activeTab === 'keys' && <AdminKeysSection filter={filter} keys={keys} lang={lang} onFilter={setFilter} onSelect={setSelected} />}{activeTab === 'images' && <ImageUsagePanel usage={imageUsage} />}{activeTab === 'routing' && <><ModelRewritePanel config={rewriteConfig} onSave={saveRewriteConfig} saving={saving === 'model-rewrite'} /><FinalFallbackPanel config={finalFallbackConfig} onSave={saveFinalFallbackConfig} saving={saving === 'final-fallback'} /><ImageProxyPanel config={imageProxyConfig} onSave={saveImageProxyConfig} saving={saving === 'image-proxy'} /></>}</div></section>{selected && <KeyDrawer selected={selected} audit={audit} config={config} lang={lang} saving={saving} onClose={() => setSelected(null)} onQuickDaily={quickDaily} onSavePolicy={savePolicy} onResetWindow={resetWindow} />}</main>;
+  return <main><header><div><h1>{t.title}</h1><p>{t.subtitle}</p></div><div className="headActions"><select value={lang} onChange={e => setLang(e.target.value as Lang)}><option value="vi">VI</option><option value="en">EN</option></select><button onClick={refresh}>{t.refresh}</button><button type="button" onClick={logout}>{t.logout}</button></div></header>{error && <pre className="error">{error}</pre>}{config && !config.ok && <section className="setup"><h2>{t.setup}</h2>{config.errors.map(e => <p key={e}>{e}</p>)}</section>}<section className="adminShell"><AdminTabBar active={activeTab} counts={tabCounts} lang={lang} onChange={changeTab} /><div className="adminTabPanel" role="tabpanel">{activeTab === 'overview' && <><AdminSummaryCards config={config} keys={keys} lang={lang} totals={totals} /><RecommendedFlow lang={lang} /><AttentionPanel config={config} keys={keys} lang={lang} onSelect={setSelected} /></>}{activeTab === 'keys' && <AdminKeysSection filter={filter} keys={keys} lang={lang} onFilter={setFilter} onSelect={setSelected} />}{activeTab === 'images' && <ImageUsagePanel usage={imageUsage} />}{activeTab === 'traffic' && <TrafficPanel summary={trafficSummary} error={trafficError} />}{activeTab === 'routing' && <><ModelRewritePanel config={rewriteConfig} onSave={saveRewriteConfig} saving={saving === 'model-rewrite'} /><FinalFallbackPanel config={finalFallbackConfig} onSave={saveFinalFallbackConfig} saving={saving === 'final-fallback'} /><ImageProxyPanel config={imageProxyConfig} onSave={saveImageProxyConfig} saving={saving === 'image-proxy'} /></>}</div></section>{selected && <KeyDrawer selected={selected} audit={audit} config={config} lang={lang} saving={saving} onClose={() => setSelected(null)} onQuickDaily={quickDaily} onSavePolicy={savePolicy} onResetWindow={resetWindow} />}</main>;
 }

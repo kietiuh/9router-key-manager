@@ -29,6 +29,7 @@ import { maybeUnlockQuotaLockout } from './services/quotaUnlock.js';
 import { buildConfigStatus } from './configStatus.js';
 import { createApiKeyCache } from './services/apiKeyCache.js';
 import { buildTrafficLogMeta } from './services/trafficLog.js';
+import { nineRouterLogMetrics } from './services/nineRouterLogMetrics.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 3039);
@@ -570,6 +571,7 @@ app.register(async protectedRoutes => {
   protectedRoutes.get('/api/config/status', async () => configStatus());
   protectedRoutes.get('/api/keys/usage', async () => usageResponse());
   protectedRoutes.get('/api/images/usage', async () => imageUsageSummary());
+  protectedRoutes.get('/api/traffic/summary', async () => nineRouterLogMetrics.summary());
   protectedRoutes.post('/api/images/usage', async (req) => recordImageUsage(ImageUsageBody.parse(req.body)));
   protectedRoutes.get('/api/model-rewrite/config', async () => getModelRewriteConfig(db));
   protectedRoutes.put('/api/model-rewrite/config', async (req) => saveModelRewriteConfig(db, ModelRewriteConfigBody.parse(req.body)));
@@ -619,6 +621,7 @@ app.register(async protectedRoutes => {
 });
 
 if (process.env.WATCHER_ENABLED !== 'false') startWatcher(db, Number(process.env.WATCH_INTERVAL_MS ?? 60_000), { hardDisable: process.env.HARD_DISABLE === 'true' });
+nineRouterLogMetrics.start();
 
 if (fs.existsSync(webRoot)) app.setNotFoundHandler(async (req, reply) => { if (req.raw.url?.startsWith('/api/')) return reply.code(404).send({ error: 'not found' }); return reply.sendFile('index.html'); });
 await app.listen({ host, port });
