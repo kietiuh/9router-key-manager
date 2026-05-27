@@ -54,8 +54,7 @@ describe('nineRouterLogMetrics', () => {
     expect(summary.models.find(model => model.model === 'gpt-5.5')).toMatchObject({ requestCount: 1, streamCount: 1 });
   });
 
-  it('bounds journal reads to avoid buffering oversized service logs', () => {
-    expect(nineRouterJournalArgs('125 minutes ago')).toContain('-n');
-    expect(nineRouterJournalArgs('125 minutes ago')).toContain('2000');
+  it('reads the full requested journal window without tail truncation', () => {
+    expect(nineRouterJournalArgs('125 minutes ago')).toEqual(['-u', '9router', '--since', '125 minutes ago', '-o', 'json', '--no-pager']);
   });
 });
