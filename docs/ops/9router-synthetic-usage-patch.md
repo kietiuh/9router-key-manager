@@ -1,6 +1,6 @@
 # 9router Synthetic Usage Patch
 
-This runbook covers the temporary GoCinema patch for installed 9router builds that return zero or partial token usage for `v4` and `cl` provider nodes.
+This runbook covers the temporary GoCinema patch for installed 9router builds that return zero or partial token usage for `v4` and `cl` provider nodes, and for streaming request detail rows that stay at `0/0`.
 
 ## Behavior
 
@@ -10,7 +10,9 @@ The patch updates the installed 9router server bundle so that successful usage w
 - if output tokens are `0`, record random `100-5,000` output tokens
 - preserve any side that already has nonzero usage
 
-The patch writes into 9router `usageHistory`, so the 9router dashboard Recent Requests and `9router-key-manager` usage ingestion both see the same values. The old key-manager-only synthetic v4 fallback should remain disabled to avoid double counting.
+The patch writes into 9router `usageHistory`, so `9router-key-manager` usage ingestion sees the same values. The old key-manager-only synthetic v4 fallback should remain disabled to avoid double counting.
+
+The patch also ties streaming `requestDetails` start and completion writes to the same row id, and applies the same fallback token values before the completion row is written. Without this, 9router writes one `0/0` row when the stream starts and a separate completion row can still carry `0/0`; the dashboard Recent Requests can then be crowded by zero-token rows and appear to miss successful v4 requests.
 
 ## Apply
 
@@ -39,6 +41,12 @@ After sending a `v4` or `cl` request, check that 9router has nonzero usage rows:
 ```
 
 Then confirm key-manager ingests from `usageHistory` and no `key-manager-synthetic` rows are being added for new v4 requests.
+
+Also confirm the newest matching `requestDetails` rows have nonzero `tokens` in `data` after the stream completes:
+
+```bash
+./node_modules/.bin/tsx -e "import Database from 'better-sqlite3'; const db=new Database('/root/.9router/db/data.sqlite',{readonly:true}); console.log(db.prepare(\"select timestamp, provider, model, data from requestDetails where provider like '%95d5d599%' order by timestamp desc limit 5\").all().map(r=>({timestamp:r.timestamp, provider:r.provider, model:r.model, tokens: JSON.parse(r.data).tokens})))"
+```
 
 ## Rollback
 
