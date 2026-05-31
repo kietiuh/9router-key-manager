@@ -23,13 +23,14 @@ import { TrafficLimiter, readTrafficLimitConfig, type TrafficLease } from './ser
 import { buildImageProxyUrl, getImageProxyConfig, isImageProxyPath, maybeRewriteImageModel, parseImageUsage, saveImageProxyConfig } from './services/imageProxy.js';
 import { enhanceImagePrompt } from './services/publicImage.js';
 import { imageProxyNeedsServerKey } from '../shared/imageProxy.js';
-import { buildQuotaErrorBody, evaluateQuotaInterceptor } from './services/quotaInterceptor.js';
+import { buildQuotaErrorBody, evaluateQuotaInterceptor, extractBearerToken } from './services/quotaInterceptor.js';
 import { buildKeyExpiredErrorBody, evaluateKeyAccessInterceptor } from './services/keyAccessInterceptor.js';
 import { maybeUnlockQuotaLockout } from './services/quotaUnlock.js';
 import { buildConfigStatus } from './configStatus.js';
 import { createApiKeyCache } from './services/apiKeyCache.js';
 import { buildTrafficLogMeta } from './services/trafficLog.js';
 import { nineRouterLogMetrics } from './services/nineRouterLogMetrics.js';
+import { recordSyntheticV4Usage } from './services/syntheticV4Usage.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 3039);
@@ -426,7 +427,9 @@ app.register(async proxyRoutes => {
       ? (Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body == null ? '' : typeof req.body === 'string' ? req.body : JSON.stringify(req.body)))
       : undefined;
 
+    const authToken = extractBearerToken(req.headers.authorization);
     const lookupKey = (token: string) => apiKeyCache.lookup(token);
+    const matchedApiKey = authToken ? lookupKey(authToken) : undefined;
     const keyAccess = evaluateKeyAccessInterceptor({
       db,
       authHeader: req.headers.authorization,
@@ -527,6 +530,19 @@ app.register(async proxyRoutes => {
         attemptCount: result.attemptCount,
         limiter: trafficLimiter.snapshot(),
       }, { includeLimiter: includeLimiterInSuccessLogs }), 'traffic proxied request');
+      const syntheticUsage = recordSyntheticV4Usage(db, {
+        apiKey: authToken ?? '',
+        keyId: matchedApiKey?.id ?? '',
+        requestId: String(req.id),
+        model: result.model,
+        upstreamStatus: result.upstream.status,
+        timestamp: new Date().toISOString(),
+        estimatedInputTokens: result.estimatedInputTokens,
+      });
+      if (syntheticUsage.recorded) {
+        invalidateUsageSummaryCache();
+        req.log.info({ keyId: matchedApiKey?.id, model: result.model, totalTokens: syntheticUsage.totalTokens }, 'synthetic v4 usage recorded');
+      }
       reply.header('x-queue-time-ms', String(result.queuedMs));
       reply.header('x-upstream-time-ms', String(result.upstreamMs));
       reply.code(result.upstream.status);
