@@ -5,6 +5,8 @@ import Database from 'better-sqlite3';
 import { default9routerDbPath } from '../../src/server/ops/9routerObservability.js';
 import {
   PATCH_MARKER,
+  REQUEST_DETAILS_PATCH_MARKER,
+  REQUEST_DETAILS_TOKEN_PATCH_MARKER,
   patch9routerUsageBundle,
   readSyntheticUsageProviderIds,
   type ProviderNodeRow,
@@ -21,7 +23,8 @@ interface CliOptions {
 }
 
 function usage() {
-  return `Patch installed 9router to synthesize token usage for v4/cl zero-token usage rows.
+  return `Patch installed 9router to synthesize token usage for v4/cl zero-token usage rows
+and keep streaming requestDetails rows aligned with completed stream usage.
 
 Default mode is dry-run. Use --apply to write the installed 9router bundle.
 
@@ -38,6 +41,9 @@ Behavior:
   For providerNodes with prefix "v4" or "cl", if input tokens are 0, 9router
   records a random 50,000-100,000 input tokens. If output tokens are 0, it
   records a random 100-5,000 output tokens. Existing nonzero usage is preserved.
+  Streaming requestDetails use the same row id from stream start through stream
+  completion, so Recent Requests is updated instead of being crowded by 0/0
+  in-progress rows.
 
 Examples:
   npm run ops:patch-9router-synthetic-usage
@@ -138,7 +144,11 @@ async function main() {
     bundlePath,
     dbPath: options.dbPath,
     providerIds,
-    marker: PATCH_MARKER,
+    markers: {
+      syntheticUsage: PATCH_MARKER,
+      streamingRequestDetails: REQUEST_DETAILS_PATCH_MARKER,
+      streamingRequestDetailsTokens: REQUEST_DETAILS_TOKEN_PATCH_MARKER,
+    },
     changed: result.changed,
     backupPath,
     note: options.apply
