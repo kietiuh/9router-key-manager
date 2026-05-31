@@ -14,7 +14,8 @@
     "start": "tsx src/server/index.ts",
     "start:bot": "tsx src/bot/index.ts",
     "ops:mitigate-9router-observability": "tsx scripts/ops/apply-9router-observability-mitigation.ts",
-    "ops:maintain-key-manager-storage": "tsx scripts/ops/maintain-key-manager-storage.ts"
+    "ops:maintain-key-manager-storage": "tsx scripts/ops/maintain-key-manager-storage.ts",
+    "ops:patch-9router-synthetic-usage": "tsx scripts/ops/apply-9router-synthetic-usage-patch.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

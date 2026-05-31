@@ -42,6 +42,7 @@ npm run build
 
 - Public 9router lag mitigation and VPS rebuild steps: [`docs/ops/9router-public-lag-mitigation.md`](docs/ops/9router-public-lag-mitigation.md).
 - Traffic queue and upstream generation timeout policy: [`docs/ops/9router-traffic-timeouts.md`](docs/ops/9router-traffic-timeouts.md).
+- Temporary 9router v4/cl synthetic usage patch: [`docs/ops/9router-synthetic-usage-patch.md`](docs/ops/9router-synthetic-usage-patch.md).
 - Single-VPS scale hardening, storage maintenance, and local-only listen policy: [`docs/ops/9router-scale-hardening.md`](docs/ops/9router-scale-hardening.md).
 
 Run the 9router observability mitigation in dry-run mode:
