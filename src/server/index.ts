@@ -19,7 +19,9 @@ import { getModelRewriteConfig, rollbackModelRewriteSelection, saveModelRewriteC
 import { applyRewritePlan, parseModelRewriteRequest } from './services/modelRewriteProxy.js';
 import { createFinalFallbackStore } from './services/finalFallback.js';
 import { fetchUpstreamWithFailover, ProxyFailoverError, TrafficAcquireError } from './services/proxyFailover.js';
-import { TrafficLimiter, readTrafficLimitConfig, type TrafficLease } from './services/trafficLimiter.js';
+import { ModelRateLimiter, type ModelRateLimitLease } from './services/modelRateLimiter.js';
+import { createModelRateLimitConfigStore } from './services/modelRateLimitConfig.js';
+import { readUpstreamTimeoutConfig, timeoutForModel } from './services/upstreamTimeouts.js';
 import { buildImageProxyUrl, getImageProxyConfig, isImageProxyPath, maybeRewriteImageModel, parseImageUsage, saveImageProxyConfig } from './services/imageProxy.js';
 import { enhanceImagePrompt } from './services/publicImage.js';
 import { imageProxyNeedsServerKey } from '../shared/imageProxy.js';
@@ -40,9 +42,11 @@ const sessionMaxAge = Number(process.env.SESSION_MAX_AGE_SECONDS ?? 60 * 60 * 24
 const secureCookie = process.env.COOKIE_SECURE === 'true' || (process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production');
 const allowedOrigins = new Set((process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',').map(o => o.trim()).filter(Boolean));
 const nineRouterUpstream = (process.env.NINE_ROUTER_UPSTREAM ?? 'http://127.0.0.1:20128').replace(/\/$/, '');
-const trafficLimiter = new TrafficLimiter(readTrafficLimitConfig(process.env));
 const app = Fastify({ logger: true });
 const db = openDb();
+const upstreamTimeoutConfig = readUpstreamTimeoutConfig(process.env);
+const modelRateLimitStore = createModelRateLimitConfigStore(db);
+const modelRateLimiter = new ModelRateLimiter(modelRateLimitStore.get());
 const includeLimiterInSuccessLogs = process.env.TRAFFIC_LOG_LIMITER_SNAPSHOT === 'true';
 const publicImageDir = process.env.PUBLIC_IMAGE_DIR ?? path.join(os.homedir(), '.local/state/9router-key-manager/public-images');
 const publicImageTtlMs = Number(process.env.PUBLIC_IMAGE_TTL_HOURS ?? 24) * 60 * 60 * 1000;
@@ -71,6 +75,8 @@ const ModelRewriteGroupBody = z.object({ id: z.number().int().positive().optiona
 const ModelRewriteConfigBody = z.object({ enabled: z.boolean(), groups: z.array(ModelRewriteGroupBody).optional(), rules: z.array(ModelRewriteRuleBody).optional() });
 const FinalFallbackConfigBody = z.object({ enabled: z.boolean(), model: z.string() });
 const ImageProxyConfigBody = z.object({ enabled: z.boolean(), upstreamBaseUrl: z.string(), authMode: z.enum(['pass-through', 'server-key']), modelOverride: z.string().optional() });
+const ModelRateLimitRuleBody = z.object({ model: z.string(), enabled: z.boolean(), rpm: z.number().positive(), queueLimit: z.number().int().nonnegative(), maxQueueWaitMs: z.number().positive() });
+const ModelRateLimitConfigBody = z.object({ enabled: z.boolean(), rules: z.array(ModelRateLimitRuleBody) });
 
 function isAuthed(req: any) { return req.unsignCookie(req.cookies?.admin_session ?? '').valid; }
 async function requireAuth(req: any, reply: any) { if (!isAuthed(req)) return reply.code(401).send({ error: 'unauthorized' }); }
@@ -493,9 +499,9 @@ app.register(async proxyRoutes => {
 
     const totalStarted = Date.now();
     const userId = maskedUser(req);
-    const largeContextThresholdTokens = readTrafficLimitConfig(process.env).largeContextThresholdTokens;
+    const largeContextThresholdTokens = upstreamTimeoutConfig.largeContextThresholdTokens;
     const disableModelFallback = req.raw.url?.split('?')[0] === '/v1/audio/speech';
-    let lease: TrafficLease | undefined;
+    let lease: ModelRateLimitLease | undefined;
     let result;
     let releaseOnFinally = true;
     try {
@@ -508,7 +514,8 @@ app.register(async proxyRoutes => {
         disableModelFallback,
         userId,
         largeContextThresholdTokens,
-        trafficLimiter,
+        modelRateLimiter,
+        upstreamTimeoutFor: (model, isLargeContext) => timeoutForModel(upstreamTimeoutConfig, model, isLargeContext),
         log: (data, message) => req.log.info(data, message),
       });
       lease = result.lease;
@@ -519,15 +526,19 @@ app.register(async proxyRoutes => {
         estimatedInputTokens: result.estimatedInputTokens,
         isLargeContext: result.isLargeContext,
         queuedMs: result.queuedMs,
+        rateQueuedMs: result.rateQueuedMs,
+        rateLimitModel: result.rateLimitModel,
+        rateLimitRpm: result.rateLimitRpm,
+        rateLimited: result.rateLimited,
         upstreamMs: result.upstreamMs,
         upstreamTimeoutMs: result.timeoutMs,
         totalMs: Date.now() - totalStarted,
         upstreamStatus: result.upstream.status,
         attemptIndex: result.attemptIndex,
         attemptCount: result.attemptCount,
-        limiter: trafficLimiter.snapshot(),
+        limiter: modelRateLimiter.snapshot(),
       }, { includeLimiter: includeLimiterInSuccessLogs }), 'traffic proxied request');
-      reply.header('x-queue-time-ms', String(result.queuedMs));
+      reply.header('x-rate-queue-time-ms', String(result.rateQueuedMs));
       reply.header('x-upstream-time-ms', String(result.upstreamMs));
       reply.code(result.upstream.status);
       result.upstream.headers.forEach((value, key) => {
@@ -550,7 +561,7 @@ app.register(async proxyRoutes => {
     } catch (err: any) {
       if (err instanceof TrafficAcquireError) {
         if (err.attemptIndex === 0 && rewritePlan) rollbackModelRewriteSelection(db, rewritePlan);
-        req.log.warn({ model: err.model, userId, errorType: 'queue_rejected', error: err.message, limiter: err.snapshot }, 'traffic limited request rejected');
+        req.log.warn({ model: err.model, userId, errorType: err.type, error: err.message, limiter: err.snapshot }, 'model rate limited request rejected');
         reply.header('retry-after', String(err.retryAfter));
         return reply.code(err.statusCode).send({ error: { message: 'Server busy, retry later', type: err.type, retry_after: err.retryAfter } });
       }
@@ -577,6 +588,12 @@ app.register(async protectedRoutes => {
   protectedRoutes.put('/api/model-rewrite/config', async (req) => saveModelRewriteConfig(db, ModelRewriteConfigBody.parse(req.body)));
   protectedRoutes.get('/api/final-fallback/config', async () => finalFallbackStore.get());
   protectedRoutes.put('/api/final-fallback/config', async (req) => finalFallbackStore.save(FinalFallbackConfigBody.parse(req.body)));
+  protectedRoutes.get('/api/model-rate-limit/config', async () => modelRateLimitStore.get());
+  protectedRoutes.put('/api/model-rate-limit/config', async (req) => {
+    const next = modelRateLimitStore.save(ModelRateLimitConfigBody.parse(req.body));
+    modelRateLimiter.updateConfig(next);
+    return next;
+  });
   protectedRoutes.get('/api/image-proxy/config', async () => getImageProxyConfig(db));
   protectedRoutes.put('/api/image-proxy/config', async (req) => saveImageProxyConfig(db, ImageProxyConfigBody.parse(req.body)));
   protectedRoutes.patch('/api/keys/:keyId/policy', async (req) => {

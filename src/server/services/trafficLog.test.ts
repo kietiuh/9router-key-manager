@@ -8,6 +8,10 @@ const base = {
   estimatedInputTokens: 256,
   isLargeContext: false,
   queuedMs: 0,
+  rateQueuedMs: 5000,
+  rateLimitModel: 'v4/gpt-5.5',
+  rateLimitRpm: 12,
+  rateLimited: true,
   upstreamMs: 1200,
   upstreamTimeoutMs: 300000,
   totalMs: 1202,
@@ -20,6 +24,15 @@ const base = {
 describe('trafficLog', () => {
   it('omits limiter snapshots from success logs by default', () => {
     expect(buildTrafficLogMeta(base)).not.toHaveProperty('limiter');
+  });
+
+  it('includes model rpm limiter metadata in success logs', () => {
+    expect(buildTrafficLogMeta(base)).toMatchObject({
+      rateQueuedMs: 5000,
+      rateLimitModel: 'v4/gpt-5.5',
+      rateLimitRpm: 12,
+      rateLimited: true,
+    });
   });
 
   it('includes limiter snapshots when enabled', () => {
