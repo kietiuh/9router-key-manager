@@ -34,13 +34,14 @@ function limiter(timeoutMs = 1000) {
   return {
     acquired,
     released,
-    trafficLimiter: {
+    modelRateLimiter: {
       snapshot: () => [],
-      acquire: async ({ model }: { model: string }) => {
+      acquire: async (model: string) => {
         acquired.push(model);
-        return { queuedMs: 0, timeoutMs, release: () => released.push(model) };
+        return { rateLimited: false, rateLimitModel: model, rateLimitRpm: null, rateQueuedMs: 0, release: () => released.push(model) };
       },
     },
+    upstreamTimeoutFor: () => timeoutMs,
   };
 }
 
@@ -55,7 +56,8 @@ describe('fetchUpstreamWithFailover', () => {
       decision: rewriteDecision(['v1', 'v2']),
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: limit.trafficLimiter,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
       fetchImpl: async (_url, init) => {
         calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
         return new Response('{}', { status: calls.length === 1 ? 500 : 200 });
@@ -81,7 +83,8 @@ describe('fetchUpstreamWithFailover', () => {
       decision: rewriteDecision(['v1', 'v2']),
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: limit.trafficLimiter,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
       fetchImpl: async (_url, init) => {
         calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
         return new Response('{}', { status: 401 });
@@ -106,7 +109,8 @@ describe('fetchUpstreamWithFailover', () => {
       decision: rewriteDecision(['v1', 'v2']),
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: limit.trafficLimiter,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
       fetchImpl: async (_url, init) => {
         calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
         if (calls.length === 1) throw new Error('socket closed');
@@ -128,10 +132,11 @@ describe('fetchUpstreamWithFailover', () => {
       decision: rewriteDecision(['v1', 'v2']),
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: {
+      modelRateLimiter: {
         snapshot: () => [],
         acquire: async () => { throw new Error('queue full'); },
       },
+      upstreamTimeoutFor: () => 1000,
     })).rejects.toMatchObject({
       attemptIndex: 0,
       model: 'v1',
@@ -144,10 +149,11 @@ describe('fetchUpstreamWithFailover', () => {
       decision: rewriteDecision(['v1', 'v2']),
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: {
+      modelRateLimiter: {
         snapshot: () => [],
         acquire: async () => { throw new Error('queue full'); },
       },
+      upstreamTimeoutFor: () => 1000,
     })).rejects.toBeInstanceOf(TrafficAcquireError);
   });
 
@@ -162,7 +168,8 @@ describe('fetchUpstreamWithFailover', () => {
       finalFallback: { enabled: true, model: 'stable' },
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: limit.trafficLimiter,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
       fetchImpl: async (_url, init) => {
         calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
         return new Response('{}', { status: calls.length < 3 ? 500 : 200 });
@@ -188,7 +195,8 @@ describe('fetchUpstreamWithFailover', () => {
       finalFallback: { enabled: false, model: 'stable' },
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: limit.trafficLimiter,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
       fetchImpl: async (_url, init) => {
         calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
         return new Response('{}', { status: 500 });
@@ -212,7 +220,8 @@ describe('fetchUpstreamWithFailover', () => {
       finalFallback: { enabled: true, model: 'stable' },
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: limit.trafficLimiter,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
       fetchImpl: async (_url, init) => {
         calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
         return new Response('{}', { status });
@@ -236,7 +245,8 @@ describe('fetchUpstreamWithFailover', () => {
       finalFallback: { enabled: true, model: 'stable' },
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: limit.trafficLimiter,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
       fetchImpl: async (_url, init) => {
         calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
         return new Response('{}', { status: calls.length === 1 ? 500 : 200 });
@@ -260,7 +270,8 @@ describe('fetchUpstreamWithFailover', () => {
       finalFallback: { enabled: true, model: 'stable' },
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: limit.trafficLimiter,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
       log: (_data, message) => messages.push(message),
       fetchImpl: async () => new Response('{}', { status: messages.length === 0 ? 500 : 200 }),
     });
@@ -281,7 +292,8 @@ describe('fetchUpstreamWithFailover', () => {
       finalFallback: { enabled: true, model: 'stable' },
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: limit.trafficLimiter,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
       log: (data) => logs.push(data),
       fetchImpl: async (_url, init) => {
         calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
@@ -312,7 +324,8 @@ describe('fetchUpstreamWithFailover', () => {
       decision: rewriteDecision(['v1']),
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: limit.trafficLimiter,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
       fetchImpl: async () => new Response('{}', { status: 200 }),
     });
 
@@ -332,7 +345,8 @@ describe('fetchUpstreamWithFailover', () => {
       disableModelFallback: true,
       userId: 'user-1',
       largeContextThresholdTokens: 1000,
-      trafficLimiter: limit.trafficLimiter,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
       fetchImpl: async (_url, init) => {
         calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
         return new Response('{"error":{"message":"tts unavailable"}}', { status: 502 });

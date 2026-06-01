@@ -151,6 +151,28 @@ export type ImageProxyConfig = {
   modelOverride?: string;
 };
 
+export type ModelRateLimitRule = {
+  model: string;
+  enabled: boolean;
+  rpm: number;
+  queueLimit: number;
+  maxQueueWaitMs: number;
+};
+
+export type ModelRateLimitConfig = {
+  enabled: boolean;
+  rules: ModelRateLimitRule[];
+};
+
+export type ModelRateLimitSnapshot = {
+  model: string;
+  enabled: boolean;
+  rpm: number;
+  queued: number;
+  queueLimit: number;
+  nextAvailableAt: number;
+};
+
 export type TrafficLatencySummary = {
   avg: number;
   max: number;

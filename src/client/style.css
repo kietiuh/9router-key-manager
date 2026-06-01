@@ -97,6 +97,10 @@ pre { overflow: auto; background: #0c1324; padding: 10px; border-radius: 10px; }
 .emptyPreview.small { min-height:120px; }
 .trafficPanel { display: grid; gap: 16px; }
 .panelHeader { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.rateLimitConfig { display:grid; gap:12px; }
+.rateLimitRules { display:grid; gap:10px; }
+.rateLimitRule { display:grid; grid-template-columns: 110px minmax(190px, 1.4fr) 90px 90px 130px auto; gap:10px; align-items:end; background:#0c1324; border:1px solid #303d59; border-radius:12px; padding:12px; }
+.rateLimitRule button { margin-bottom:10px; }
 .trafficGrid { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 .trafficColumns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .trafficBars { display: grid; gap: 10px; }
@@ -104,7 +108,7 @@ pre { overflow: auto; background: #0c1324; padding: 10px; border-radius: 10px; }
 .trafficBar div { height: 10px; background: #29334a; border-radius: 999px; overflow: hidden; }
 .trafficBar b { display: block; height: 100%; background: #356cff; border-radius: 999px; }
 .trafficBar em { font-style: normal; color: #9aa7bd; font-size: 12px; }
-@media (max-width: 900px) { .trafficColumns { grid-template-columns: 1fr; } .trafficBar { grid-template-columns: 1fr; } .panelHeader { display: grid; } }
+@media (max-width: 900px) { .trafficColumns { grid-template-columns: 1fr; } .trafficBar, .rateLimitRule { grid-template-columns: 1fr; } .panelHeader { display: grid; } .rateLimitRule button { margin-bottom:0; } }
 .trafficStatsGrid { display:grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap:12px; }
 .trafficStatsGrid .card { display:grid; gap:6px; align-content:start; }
 .trafficStatsGrid .card strong { line-height:1.1; }

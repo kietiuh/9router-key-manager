@@ -5,6 +5,10 @@ export type TrafficLogMeta = {
   estimatedInputTokens: number;
   isLargeContext: boolean;
   queuedMs: number;
+  rateQueuedMs: number;
+  rateLimitModel: string;
+  rateLimitRpm: number | null;
+  rateLimited: boolean;
   upstreamMs: number;
   upstreamTimeoutMs: number;
   totalMs: number;
@@ -25,6 +29,10 @@ export function buildTrafficLogMeta(
     estimatedInputTokens,
     isLargeContext,
     queuedMs,
+    rateQueuedMs,
+    rateLimitModel,
+    rateLimitRpm,
+    rateLimited,
     upstreamMs,
     upstreamTimeoutMs,
     totalMs,
@@ -40,6 +48,10 @@ export function buildTrafficLogMeta(
     estimatedInputTokens,
     isLargeContext,
     queuedMs,
+    rateQueuedMs,
+    rateLimitModel,
+    rateLimitRpm,
+    rateLimited,
     upstreamMs,
     upstreamTimeoutMs,
     totalMs,
