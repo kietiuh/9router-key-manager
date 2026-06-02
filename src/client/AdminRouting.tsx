@@ -3,12 +3,24 @@ import type { FinalFallbackConfig, ImageProxyConfig, ModelRewriteConfig } from '
 import { finalFallbackNeedsModel } from '../shared/finalFallback';
 import { IMAGE_PROXY_ALLOWED_BASE_URLS } from '../shared/imageProxy';
 
-type RewriteDraftRule = { id?: number; groupId?: number | null; enabled: boolean; fromModel: string; toModel: string; toModels: string[]; stickyCount: number };
+type RewriteDraftRule = { id?: number; groupId?: number | null; enabled: boolean; fromModel: string; toModel: string; toModels: string[]; stickyCount: number; targetWeights: number[] };
 export type RewriteDraftGroup = { id?: number; name: string; enabled: boolean; rules: RewriteDraftRule[] };
+
+function positiveInt(value: unknown, fallback = 1): number {
+  const n = Math.trunc(Number(value));
+  return Number.isFinite(n) && n >= 1 ? n : fallback;
+}
+
+function draftWeights(weights: unknown, targetCount: number, fallback: number): number[] {
+  const raw = Array.isArray(weights) ? weights : [];
+  return Array.from({ length: targetCount }, (_, index) => positiveInt(raw[index], fallback));
+}
 
 function draftRule(r: ModelRewriteConfig['groups'][number]['rules'][number]): RewriteDraftRule {
   const targets = r.toModels?.length ? r.toModels : (r.toModel ? [r.toModel] : ['']);
-  return { id: r.id, groupId: r.groupId, enabled: r.enabled, fromModel: r.fromModel, toModel: targets[0] ?? '', toModels: targets, stickyCount: Math.max(1, Number(r.stickyCount ?? 1)) };
+  const stickyCount = positiveInt(r.stickyCount ?? 1);
+  const targetWeights = draftWeights(r.targetWeights, targets.length, stickyCount);
+  return { id: r.id, groupId: r.groupId, enabled: r.enabled, fromModel: r.fromModel, toModel: targets[0] ?? '', toModels: targets, stickyCount: targetWeights[0] ?? stickyCount, targetWeights };
 }
 
 function draftGroups(config: ModelRewriteConfig | null): RewriteDraftGroup[] {
@@ -28,7 +40,7 @@ export function ModelRewritePanel({ config, onSave, saving }: { config: ModelRew
   const removeGroup = (idx: number) => { setDirty(true); setGroups(groups.filter((_, i) => i !== idx)); };
   const addRule = (groupIdx: number) => {
     setDirty(true);
-    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: [...g.rules, { enabled: true, fromModel: '', toModel: '', toModels: [''], stickyCount: 1 }] } : g));
+    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: [...g.rules, { enabled: true, fromModel: '', toModel: '', toModels: [''], stickyCount: 1, targetWeights: [1] }] } : g));
   };
   const patchRule = (groupIdx: number, ruleIdx: number, patch: Partial<RewriteDraftRule>) => {
     setDirty(true);
@@ -42,17 +54,27 @@ export function ModelRewritePanel({ config, onSave, saving }: { config: ModelRew
       return { ...r, toModels, toModel: toModels[0] ?? '' };
     }) } : g));
   };
+  const patchTargetWeight = (groupIdx: number, ruleIdx: number, targetIdx: number, value: number) => {
+    setDirty(true);
+    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => {
+      if (j !== ruleIdx) return r;
+      const targetWeights = r.targetWeights.map((weight, k) => k === targetIdx ? positiveInt(value, weight) : weight);
+      return { ...r, targetWeights, stickyCount: targetWeights[0] ?? 1 };
+    }) } : g));
+  };
   const addTarget = (groupIdx: number, ruleIdx: number) => {
     setDirty(true);
-    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => j === ruleIdx ? { ...r, toModels: [...r.toModels, ''] } : r) } : g));
+    setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => j === ruleIdx ? { ...r, toModels: [...r.toModels, ''], targetWeights: [...r.targetWeights, 1] } : r) } : g));
   };
   const removeTarget = (groupIdx: number, ruleIdx: number, targetIdx: number) => {
     setDirty(true);
     setGroups(groups.map((g, i) => i === groupIdx ? { ...g, rules: g.rules.map((r, j) => {
       if (j !== ruleIdx) return r;
       const toModels = r.toModels.filter((_, k) => k !== targetIdx);
+      const targetWeights = r.targetWeights.filter((_, k) => k !== targetIdx);
       const next = toModels.length ? toModels : [''];
-      return { ...r, toModels: next, toModel: next[0] ?? '' };
+      const nextWeights = targetWeights.length ? targetWeights : [1];
+      return { ...r, toModels: next, toModel: next[0] ?? '', targetWeights: nextWeights, stickyCount: nextWeights[0] ?? 1 };
     }) } : g));
   };
   const removeRule = (groupIdx: number, ruleIdx: number) => {
@@ -61,13 +83,59 @@ export function ModelRewritePanel({ config, onSave, saving }: { config: ModelRew
   };
   const save = async () => {
     const payload = groups.map(g => ({ ...g, rules: g.rules.map(r => {
-      const toModels = (r.toModels.length ? r.toModels : [r.toModel]).map(v => v.trim()).filter(Boolean);
-      return { ...r, toModels, toModel: toModels[0] ?? '', stickyCount: Math.max(1, Number(r.stickyCount) || 1) };
+      const pairs = (r.toModels.length ? r.toModels : [r.toModel])
+        .map((v, index) => ({ model: v.trim(), weight: positiveInt(r.targetWeights[index], 1) }))
+        .filter(pair => pair.model);
+      const toModels = pairs.map(pair => pair.model);
+      const targetWeights = pairs.map(pair => pair.weight);
+      return { ...r, toModels, toModel: toModels[0] ?? '', stickyCount: targetWeights[0] ?? 1, targetWeights };
     }) }));
     await onSave({ enabled, groups: payload });
     setDirty(false);
   };
-  return <section className="attention"><h2>Cấu hình nâng cao — Model rewrite</h2><p>Soft OFF: tắt global là proxy không rewrite model. Khi bật, hệ thống duyệt group theo thứ tự, rule khớp đầu tiên sẽ đổi A → [B, C] theo sticky và failover.</p><label><input type="checkbox" checked={enabled} onChange={e => markEnabled(e.target.checked)} /> Enable model rewrite</label><div className="rewriteList">{groups.map((g, groupIdx) => <div className="rewriteGroup" key={groupIdx}><div className="rewriteGroupHead"><label><input type="checkbox" checked={g.enabled} onChange={e => patchGroup(groupIdx, { enabled: e.target.checked })} /> Group enabled</label><label>Group name<input value={g.name} onChange={e => patchGroup(groupIdx, { name: e.target.value })} placeholder="Group A" /></label><button type="button" onClick={() => removeGroup(groupIdx)}>Remove group</button></div><div className="rewriteRules">{g.rules.map((r, ruleIdx) => <div className="rewriteRule" key={ruleIdx}><label><input type="checkbox" checked={r.enabled} onChange={e => patchRule(groupIdx, ruleIdx, { enabled: e.target.checked })} /> Rule enabled</label><label>From model<input value={r.fromModel} onChange={e => patchRule(groupIdx, ruleIdx, { fromModel: e.target.value })} placeholder="cx/gpt-5.5" /></label><div className="rewriteTargets"><span>Target models</span>{r.toModels.map((target, targetIdx) => <div className="rewriteTarget" key={targetIdx}><input value={target} onChange={e => patchTarget(groupIdx, ruleIdx, targetIdx, e.target.value)} placeholder={`v${targetIdx + 1}/cx/gpt-5.5`} /><button type="button" onClick={() => removeTarget(groupIdx, ruleIdx, targetIdx)}>Remove target</button></div>)}<button type="button" onClick={() => addTarget(groupIdx, ruleIdx)}>Add target</button></div><label>Sticky<input type="number" min={1} value={r.stickyCount} onChange={e => patchRule(groupIdx, ruleIdx, { stickyCount: Math.max(1, Number(e.target.value) || 1) })} /></label><button type="button" onClick={() => removeRule(groupIdx, ruleIdx)}>Remove rule</button></div>)}</div><button type="button" onClick={() => addRule(groupIdx)}>Add rule</button></div>)}</div><div className="actions"><button type="button" onClick={addGroup}>Add group</button><button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save rewrite config'}{dirty ? ' *' : ''}</button></div></section>;
+  return (
+    <section className="attention">
+      <h2>Cấu hình nâng cao — Model rewrite</h2>
+      <p>Soft OFF: tắt global là proxy không rewrite model. Khi bật, hệ thống duyệt group theo thứ tự, rule khớp đầu tiên sẽ đổi A → B:1, C:2, D:3 theo số lượt từng target và failover.</p>
+      <label><input type="checkbox" checked={enabled} onChange={e => markEnabled(e.target.checked)} /> Enable model rewrite</label>
+      <div className="rewriteList">
+        {groups.map((g, groupIdx) => (
+          <div className="rewriteGroup" key={groupIdx}>
+            <div className="rewriteGroupHead">
+              <label><input type="checkbox" checked={g.enabled} onChange={e => patchGroup(groupIdx, { enabled: e.target.checked })} /> Group enabled</label>
+              <label>Group name<input value={g.name} onChange={e => patchGroup(groupIdx, { name: e.target.value })} placeholder="Group A" /></label>
+              <button type="button" onClick={() => removeGroup(groupIdx)}>Remove group</button>
+            </div>
+            <div className="rewriteRules">
+              {g.rules.map((r, ruleIdx) => (
+                <div className="rewriteRule" key={ruleIdx}>
+                  <label><input type="checkbox" checked={r.enabled} onChange={e => patchRule(groupIdx, ruleIdx, { enabled: e.target.checked })} /> Rule enabled</label>
+                  <label>From model<input value={r.fromModel} onChange={e => patchRule(groupIdx, ruleIdx, { fromModel: e.target.value })} placeholder="cx/gpt-5.5" /></label>
+                  <div className="rewriteTargets">
+                    <span>Target models</span>
+                    {r.toModels.map((target, targetIdx) => (
+                      <div className="rewriteTarget" key={targetIdx}>
+                        <input value={target} onChange={e => patchTarget(groupIdx, ruleIdx, targetIdx, e.target.value)} placeholder={`v${targetIdx + 1}/cx/gpt-5.5`} />
+                        <label>Lượt<input type="number" min={1} value={r.targetWeights[targetIdx] ?? 1} onChange={e => patchTargetWeight(groupIdx, ruleIdx, targetIdx, Number(e.target.value))} /></label>
+                        <button type="button" onClick={() => removeTarget(groupIdx, ruleIdx, targetIdx)}>Remove target</button>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => addTarget(groupIdx, ruleIdx)}>Add target</button>
+                  </div>
+                  <button type="button" onClick={() => removeRule(groupIdx, ruleIdx)}>Remove rule</button>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={() => addRule(groupIdx)}>Add rule</button>
+          </div>
+        ))}
+      </div>
+      <div className="actions">
+        <button type="button" onClick={addGroup}>Add group</button>
+        <button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save rewrite config'}{dirty ? ' *' : ''}</button>
+      </div>
+    </section>
+  );
 }
 
 export function FinalFallbackPanel({ config, onSave, saving }: { config: FinalFallbackConfig | null; onSave: (cfg: FinalFallbackConfig) => Promise<void>; saving: boolean }) {

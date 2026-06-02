@@ -8,6 +8,7 @@ export type ModelRewriteRule = {
   toModel: string;
   toModels: string[];
   stickyCount: number;
+  targetWeights?: number[];
   stickyIndex?: number;
   stickyUsed?: number;
   createdAt?: string;
@@ -70,6 +71,28 @@ function normalizeStickyCount(value: unknown): number {
   return Number.isFinite(n) && n >= 1 ? n : 1;
 }
 
+function normalizeTargetWeight(value: unknown, fallback: unknown = 1): number {
+  const fallbackWeight = normalizeStickyCount(fallback);
+  const n = Math.trunc(Number(value));
+  return Number.isFinite(n) && n >= 1 ? n : fallbackWeight;
+}
+
+function normalizeWeightList(raw: unknown, targetCount: number, fallbackWeight: number): number[] {
+  const list = Array.isArray(raw) ? raw : [];
+  return Array.from({ length: targetCount }, (_, index) => normalizeTargetWeight(list[index], fallbackWeight));
+}
+
+function parseStoredTargetWeights(raw: unknown, targetCount: number, fallbackWeight: number): number[] {
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      return normalizeWeightList(JSON.parse(raw), targetCount, fallbackWeight);
+    } catch {
+      // Legacy rows fall back to sticky_count below.
+    }
+  }
+  return normalizeWeightList([], targetCount, fallbackWeight);
+}
+
 function normalizeStickyIndex(value: unknown, targetCount: number): number {
   if (targetCount <= 0) return 0;
   const n = Math.trunc(Number(value));
@@ -87,6 +110,27 @@ function targetsForRule(rule: Pick<ModelRewriteRule, 'toModel' | 'toModels'>): s
   return normalizeTargets({ toModel: rule.toModel, toModels: rule.toModels });
 }
 
+function targetEntriesForRule(rule: Pick<ModelRewriteRule, 'toModel' | 'toModels' | 'stickyCount' | 'targetWeights'>): { targets: string[]; targetWeights: number[] } {
+  return normalizeTargetEntries({ toModel: rule.toModel, toModels: rule.toModels, stickyCount: rule.stickyCount, targetWeights: rule.targetWeights });
+}
+
+function normalizeTargetEntries(rule: { toModel?: string | null; toModels?: unknown; stickyCount?: unknown; targetWeights?: unknown }): { targets: string[]; targetWeights: number[] } {
+  const raw = Array.isArray(rule.toModels) && rule.toModels.length ? rule.toModels : [rule.toModel];
+  const rawWeights = Array.isArray(rule.targetWeights) ? rule.targetWeights : [];
+  const fallbackWeight = normalizeStickyCount(rule.stickyCount);
+  const seen = new Set<string>();
+  const targets: string[] = [];
+  const targetWeights: number[] = [];
+  raw.forEach((item, index) => {
+    const target = String(item ?? '').trim();
+    if (!target || seen.has(target)) return;
+    seen.add(target);
+    targets.push(target);
+    targetWeights.push(normalizeTargetWeight(rawWeights[index], fallbackWeight));
+  });
+  return { targets, targetWeights };
+}
+
 function rotateTargets(targets: string[], start: number): string[] {
   if (!targets.length) return [];
   return [...targets.slice(start), ...targets.slice(0, start)];
@@ -94,7 +138,10 @@ function rotateTargets(targets: string[], start: number): string[] {
 
 function rowToRule(row: any): ModelRewriteRule {
   const toModels = parseStoredTargets(row.to_models_json, row.to_model);
-  const stickyCount = normalizeStickyCount(row.sticky_count);
+  const legacyStickyCount = normalizeStickyCount(row.sticky_count);
+  const targetWeights = parseStoredTargetWeights(row.target_weights_json, toModels.length, legacyStickyCount);
+  const stickyCount = targetWeights[0] ?? legacyStickyCount;
+  const stickyIndex = normalizeStickyIndex(row.sticky_index, toModels.length);
   return {
     id: Number(row.id),
     groupId: row.group_id == null ? null : Number(row.group_id),
@@ -103,8 +150,9 @@ function rowToRule(row: any): ModelRewriteRule {
     toModel: toModels[0] ?? row.to_model,
     toModels,
     stickyCount,
-    stickyIndex: normalizeStickyIndex(row.sticky_index, toModels.length),
-    stickyUsed: normalizeStickyUsed(row.sticky_used, stickyCount),
+    targetWeights,
+    stickyIndex,
+    stickyUsed: normalizeStickyUsed(row.sticky_used, targetWeights[stickyIndex] ?? stickyCount),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -134,20 +182,21 @@ export function getModelRewriteConfig(db: Database.Database): ModelRewriteConfig
   return { enabled: setting?.value === 'true', groups, rules: groups.flatMap(g => g.rules) };
 }
 
-type SaveRule = { id?: number; groupId?: number | null; enabled?: boolean; fromModel: string; toModel?: string | null; toModels?: string[]; stickyCount?: number };
+type SaveRule = { id?: number; groupId?: number | null; enabled?: boolean; fromModel: string; toModel?: string | null; toModels?: string[]; stickyCount?: number; targetWeights?: number[] };
 type SaveGroup = { id?: number; name?: string; enabled?: boolean; rules?: SaveRule[] };
 type SaveConfig = { enabled: boolean; groups?: SaveGroup[]; rules?: SaveRule[] };
 
 function cleanRules(rules: SaveRule[] | undefined) {
   return (rules ?? []).map((r) => {
-    const toModels = normalizeTargets(r);
+    const { targets: toModels, targetWeights } = normalizeTargetEntries(r);
     return {
       id: r.id,
       enabled: r.enabled !== false,
       fromModel: String(r.fromModel ?? '').trim(),
       toModel: toModels[0] ?? '',
       toModels,
-      stickyCount: normalizeStickyCount((r as any).stickyCount),
+      stickyCount: targetWeights[0] ?? normalizeStickyCount((r as any).stickyCount),
+      targetWeights,
     };
   }).filter(r => r.fromModel && r.toModels.length);
 }
@@ -170,11 +219,11 @@ export function saveModelRewriteConfig(db: Database.Database, cfg: SaveConfig): 
     db.prepare('DELETE FROM model_rewrite_rules').run();
     db.prepare('DELETE FROM model_rewrite_groups').run();
     const insertGroup = db.prepare('INSERT INTO model_rewrite_groups (enabled, name, sort_order) VALUES (?, ?, ?)');
-    const insertRule = db.prepare('INSERT INTO model_rewrite_rules (group_id, enabled, from_model, to_model, to_models_json, sticky_count, sticky_index, sticky_used, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const insertRule = db.prepare('INSERT INTO model_rewrite_rules (group_id, enabled, from_model, to_model, to_models_json, target_weights_json, sticky_count, sticky_index, sticky_used, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     clean.forEach((g, groupIndex) => {
       const result = insertGroup.run(g.enabled ? 1 : 0, g.name, groupIndex);
       const groupId = Number(result.lastInsertRowid);
-      g.rules.forEach((r, ruleIndex) => insertRule.run(groupId, r.enabled ? 1 : 0, r.fromModel, r.toModel, JSON.stringify(r.toModels), r.stickyCount, 0, 0, ruleIndex));
+      g.rules.forEach((r, ruleIndex) => insertRule.run(groupId, r.enabled ? 1 : 0, r.fromModel, r.toModel, JSON.stringify(r.toModels), JSON.stringify(r.targetWeights), r.stickyCount, 0, 0, ruleIndex));
     });
   })();
   return getModelRewriteConfig(db);
@@ -208,10 +257,10 @@ export function selectModelRewriteTargets(db: Database.Database, model: unknown)
     const cfg = getModelRewriteConfig(db);
     const rule = findModelRewriteRule(input, cfg);
     if (!rule) return undefined;
-    const targets = targetsForRule(rule);
+    const { targets, targetWeights } = targetEntriesForRule(rule);
     if (!targets.length) return undefined;
-    const stickyCount = normalizeStickyCount(rule.stickyCount);
     const stickyIndex = normalizeStickyIndex(rule.stickyIndex, targets.length);
+    const stickyCount = targetWeights[stickyIndex] ?? normalizeStickyCount(rule.stickyCount);
     const stickyUsed = normalizeStickyUsed(rule.stickyUsed, stickyCount);
     const selectedModel = targets[stickyIndex];
     let nextIndex = stickyIndex;
@@ -236,16 +285,16 @@ export function rollbackModelRewriteSelection(db: Database.Database, plan: Rewri
     const cfg = getModelRewriteConfig(db);
     const rule = cfg.rules?.find(r => r.id === plan.ruleId);
     if (!rule) return;
-    const targets = targetsForRule(rule);
+    const { targets, targetWeights } = targetEntriesForRule(rule);
     if (!targets.length) return;
-    const stickyCount = normalizeStickyCount(rule.stickyCount);
     const stickyIndex = normalizeStickyIndex(rule.stickyIndex, targets.length);
+    const stickyCount = targetWeights[stickyIndex] ?? normalizeStickyCount(rule.stickyCount);
     const stickyUsed = normalizeStickyUsed(rule.stickyUsed, stickyCount);
     let previousIndex = stickyIndex;
     let previousUsed = stickyUsed - 1;
     if (previousUsed < 0) {
       previousIndex = (stickyIndex - 1 + targets.length) % targets.length;
-      previousUsed = stickyCount - 1;
+      previousUsed = (targetWeights[previousIndex] ?? normalizeStickyCount(rule.stickyCount)) - 1;
     }
     db.prepare('UPDATE model_rewrite_rules SET sticky_index = ?, sticky_used = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(previousIndex, previousUsed, plan.ruleId);
   })();

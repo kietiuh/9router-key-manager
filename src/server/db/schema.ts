@@ -129,6 +129,7 @@ export function migrate(db: Database.Database): void {
       from_model TEXT NOT NULL,
       to_model TEXT NOT NULL,
       to_models_json TEXT,
+      target_weights_json TEXT,
       sticky_count INTEGER NOT NULL DEFAULT 1,
       sticky_index INTEGER NOT NULL DEFAULT 0,
       sticky_used INTEGER NOT NULL DEFAULT 0,
@@ -161,6 +162,7 @@ export function migrate(db: Database.Database): void {
   if (!rewriteNames.has('group_id')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN group_id INTEGER');
   if (!rewriteNames.has('sort_order')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0');
   if (!rewriteNames.has('to_models_json')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN to_models_json TEXT');
+  if (!rewriteNames.has('target_weights_json')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN target_weights_json TEXT');
   if (!rewriteNames.has('sticky_count')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN sticky_count INTEGER NOT NULL DEFAULT 1');
   if (!rewriteNames.has('sticky_index')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN sticky_index INTEGER NOT NULL DEFAULT 0');
   if (!rewriteNames.has('sticky_used')) db.exec('ALTER TABLE model_rewrite_rules ADD COLUMN sticky_used INTEGER NOT NULL DEFAULT 0');

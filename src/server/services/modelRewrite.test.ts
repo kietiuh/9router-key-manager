@@ -90,6 +90,7 @@ describe('model rewrite config', () => {
       toModel: 'v1',
       toModels: ['v1', 'v2'],
       stickyCount: 2,
+      targetWeights: [2, 2],
       stickyIndex: 0,
       stickyUsed: 0,
     });
@@ -132,6 +133,7 @@ describe('model rewrite config', () => {
     expect(rule.toModel).toBe('next');
     expect(rule.toModels).toEqual(['next']);
     expect(rule.stickyCount).toBe(1);
+    expect(rule.targetWeights).toEqual([1]);
     expect(rule.stickyIndex).toBe(0);
     expect(rule.stickyUsed).toBe(0);
   });
@@ -148,6 +150,26 @@ describe('model rewrite config', () => {
 
     expect(plans.map(p => p?.selectedModel)).toEqual(['v1', 'v1', 'v2', 'v2', 'v3', 'v3', 'v1']);
     expect(plans[4]?.targets).toEqual(['v3', 'v1', 'v2']);
+  });
+
+  it('selects targets using per-target sticky weights', () => {
+    const db = memDb();
+    const cfg = saveModelRewriteConfig(db, { enabled: true, groups: [
+      { name: 'Main', rules: [
+        { fromModel: 'source', toModels: ['B', 'C', 'D'], targetWeights: [1, 2, 3] } as any,
+      ] },
+    ] });
+
+    expect(cfg.groups[0].rules[0]).toMatchObject({
+      toModels: ['B', 'C', 'D'],
+      stickyCount: 1,
+      targetWeights: [1, 2, 3],
+    });
+
+    const plans = Array.from({ length: 7 }, () => selectModelRewriteTargets(db, 'source'));
+
+    expect(plans.map(p => p?.selectedModel)).toEqual(['B', 'C', 'C', 'D', 'D', 'D', 'B']);
+    expect(plans[3]?.targets).toEqual(['D', 'B', 'C']);
   });
 
   it('does not advance sticky state when global rewrite is disabled', () => {
@@ -182,6 +204,24 @@ describe('model rewrite config', () => {
     expect(selectModelRewriteTargets(db, 'source')?.selectedModel).toBe('v1');
   });
 
+  it('rolls back a weighted selection after the selected target advances', () => {
+    const db = memDb();
+    saveModelRewriteConfig(db, { enabled: true, groups: [
+      { name: 'Main', rules: [
+        { fromModel: 'source', toModels: ['B', 'C'], targetWeights: [1, 3] } as any,
+      ] },
+    ] });
+
+    const plan = selectModelRewriteTargets(db, 'source');
+    expect(plan?.selectedModel).toBe('B');
+    expect(getModelRewriteConfig(db).groups[0].rules[0]).toMatchObject({ stickyIndex: 1, stickyUsed: 0 });
+
+    rollbackModelRewriteSelection(db, plan!);
+
+    expect(getModelRewriteConfig(db).groups[0].rules[0]).toMatchObject({ stickyIndex: 0, stickyUsed: 0 });
+    expect(selectModelRewriteTargets(db, 'source')?.selectedModel).toBe('B');
+  });
+
   it('migrates existing flat rules into the Default group', () => {
     const db = new Database(':memory:');
     db.exec(`
@@ -210,6 +250,7 @@ describe('model rewrite config', () => {
     expect(cfg.groups[0].rules[0].fromModel).toBe('legacy');
     expect(cfg.groups[0].rules[0].toModel).toBe('next');
     expect(cfg.groups[0].rules[0].toModels).toEqual(['next']);
+    expect(cfg.groups[0].rules[0].targetWeights).toEqual([1]);
     expect(cfg.rules?.[0].fromModel).toBe('legacy');
   });
 });
