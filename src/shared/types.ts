@@ -118,6 +118,7 @@ export type ModelRewriteRule = {
   toModel: string;
   toModels: string[];
   stickyCount: number;
+  targetWeights?: number[];
   stickyIndex?: number;
   stickyUsed?: number;
   createdAt?: string;

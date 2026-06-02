@@ -38,10 +38,11 @@ input[type=checkbox] { width:auto; margin-right:8px; vertical-align:middle; }
 .rewriteGroup { display:grid; gap:10px; background:#0c1324; border:1px solid #303d59; border-radius:12px; padding:12px; }
 .rewriteGroupHead { display:grid; grid-template-columns: 150px 1fr auto; gap:10px; align-items:end; }
 .rewriteRules { display:grid; gap:10px; }
-.rewriteRule { display:grid; grid-template-columns: 130px 1fr minmax(260px, 2fr) 100px auto; gap:10px; align-items:end; background:#0c1324; border:1px solid #303d59; border-radius:12px; padding:12px; }
+.rewriteRule { display:grid; grid-template-columns: 130px 1fr minmax(340px, 2fr) auto; gap:10px; align-items:end; background:#0c1324; border:1px solid #303d59; border-radius:12px; padding:12px; }
 .rewriteTargets { display:grid; gap:8px; }
 .rewriteTargets span { color:#9aa7bd; font-size:12px; }
-.rewriteTarget { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; }
+.rewriteTarget { display:grid; grid-template-columns: minmax(180px, 1fr) 90px auto; gap:8px; align-items:end; }
+.rewriteTarget label { margin:0; }
 .rewriteTarget input { margin-top:0; }
 .fallbackFields { display:grid; grid-template-columns: 180px minmax(260px, 1fr); gap:10px; align-items:end; max-width:720px; }
 .actions, .quick { display:flex; gap: 10px; margin: 12px 0 20px; flex-wrap:wrap; } .quick button { background:#123d2a; color:#55e39a; }
