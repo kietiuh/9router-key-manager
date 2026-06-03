@@ -566,8 +566,9 @@ app.register(async proxyRoutes => {
         return reply.code(err.statusCode).send({ error: { message: 'Server busy, retry later', type: err.type, retry_after: err.retryAfter } });
       }
       if (err instanceof ProxyFailoverError) {
-        req.log.error({ model: err.model, userId, totalMs: Date.now() - totalStarted, errorType: err.type, error: err.message }, 'traffic proxied request failed');
-        return reply.code(err.statusCode).send({ error: { message: err.message, type: err.type } });
+        req.log.error({ model: err.model, userId, totalMs: Date.now() - totalStarted, errorType: err.type, upstreamStatus: err.upstreamStatus, upstreamErrorType: err.errorType, upstreamError: err.cause instanceof Error ? err.cause.message : undefined, error: err.message }, 'traffic proxied request failed');
+        if (err.retryAfter) reply.header('retry-after', String(err.retryAfter));
+        return reply.code(err.statusCode).send({ error: { message: err.message, type: err.type, ...(err.retryAfter ? { retry_after: err.retryAfter } : {}) } });
       }
       req.log.error({ userId, totalMs: Date.now() - totalStarted, errorType: 'proxy_error', error: err?.message }, 'traffic proxied request failed');
       return reply.code(502).send({ error: { message: 'Upstream proxy error', type: 'proxy_error' } });

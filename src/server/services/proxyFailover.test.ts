@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fetchUpstreamWithFailover, TrafficAcquireError } from './proxyFailover.js';
+import { fetchUpstreamWithFailover, ProxyFailoverError, TrafficAcquireError } from './proxyFailover.js';
 import type { RewriteDecision } from './modelRewriteProxy.js';
 
 function rewriteDecision(targets: string[]): RewriteDecision {
@@ -209,29 +209,80 @@ describe('fetchUpstreamWithFailover', () => {
     result.lease.release();
   });
 
-  it.each([401, 413])('uses final fallback for upstream %s', async (status) => {
+  it.each([400, 401, 413])('masks upstream %s from final fallback as server overloaded', async (status) => {
     const calls: string[] = [];
     const limit = limiter();
-    const result = await fetchUpstreamWithFailover({
-      upstreamUrl: 'http://upstream/v1/chat/completions',
-      method: 'POST',
-      headers: new Headers({ 'content-type': 'application/json' }),
-      decision: rewriteDecision(['v1']),
-      finalFallback: { enabled: true, model: 'stable' },
-      userId: 'user-1',
-      largeContextThresholdTokens: 1000,
-      modelRateLimiter: limit.modelRateLimiter,
-      upstreamTimeoutFor: limit.upstreamTimeoutFor,
-      fetchImpl: async (_url, init) => {
-        calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
-        return new Response('{}', { status });
-      },
-    });
+    let thrown: unknown;
+    try {
+      await fetchUpstreamWithFailover({
+        upstreamUrl: 'http://upstream/v1/chat/completions',
+        method: 'POST',
+        headers: new Headers({ 'content-type': 'application/json' }),
+        decision: rewriteDecision(['v1']),
+        finalFallback: { enabled: true, model: 'stable' },
+        userId: 'user-1',
+        largeContextThresholdTokens: 1000,
+        modelRateLimiter: limit.modelRateLimiter,
+        upstreamTimeoutFor: limit.upstreamTimeoutFor,
+        fetchImpl: async (_url, init) => {
+          calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+          return new Response('{}', { status: calls.length === 1 ? 500 : status });
+        },
+      });
+    } catch (err) {
+      thrown = err;
+    }
 
     expect(calls).toEqual(['v1', 'stable']);
-    expect(result.model).toBe('stable');
-    expect(result.upstream.status).toBe(status);
-    result.lease.release();
+    expect(limit.released).toEqual(['v1', 'stable']);
+    expect(thrown).toBeInstanceOf(ProxyFailoverError);
+    expect(thrown).toMatchObject({
+      statusCode: 429,
+      type: 'server_overloaded',
+      message: 'Server busy, retry later',
+      model: 'stable',
+      retryAfter: 10,
+      upstreamStatus: status,
+    });
+  });
+
+  it('masks request errors from final fallback as server overloaded', async () => {
+    const calls: string[] = [];
+    const limit = limiter();
+    let thrown: unknown;
+    try {
+      await fetchUpstreamWithFailover({
+        upstreamUrl: 'http://upstream/v1/chat/completions',
+        method: 'POST',
+        headers: new Headers({ 'content-type': 'application/json' }),
+        decision: rewriteDecision(['v1']),
+        finalFallback: { enabled: true, model: 'stable' },
+        userId: 'user-1',
+        largeContextThresholdTokens: 1000,
+        modelRateLimiter: limit.modelRateLimiter,
+        upstreamTimeoutFor: limit.upstreamTimeoutFor,
+        fetchImpl: async (_url, init) => {
+          calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+          if (calls.length === 1) return new Response('{}', { status: 500 });
+          throw new Error('provider leaked details');
+        },
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(calls).toEqual(['v1', 'stable']);
+    expect(limit.released).toEqual(['v1', 'stable']);
+    expect(thrown).toBeInstanceOf(ProxyFailoverError);
+    expect(thrown).toMatchObject({
+      statusCode: 429,
+      type: 'server_overloaded',
+      message: 'Server busy, retry later',
+      model: 'stable',
+      retryAfter: 10,
+      errorType: 'proxy_error',
+    });
+    expect((thrown as Error).message).not.toContain('provider leaked details');
   });
 
   it('uses final fallback for pass-through JSON requests when the source model fails', async () => {
