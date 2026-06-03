@@ -45,6 +45,10 @@ input[type=checkbox] { width:auto; margin-right:8px; vertical-align:middle; }
 .rewriteTarget label { margin:0; }
 .rewriteTarget input { margin-top:0; }
 .fallbackFields { display:grid; grid-template-columns: 180px minmax(260px, 1fr); gap:10px; align-items:end; max-width:720px; }
+.fallbackModels { display:grid; gap:8px; }
+.fallbackModels span { color:#9aa7bd; font-size:12px; }
+.fallbackModelRow { display:grid; grid-template-columns:minmax(220px, 1fr) auto auto auto; gap:8px; align-items:end; }
+.fallbackModelRow input { margin-top:0; }
 .actions, .quick { display:flex; gap: 10px; margin: 12px 0 20px; flex-wrap:wrap; } .quick button { background:#123d2a; color:#55e39a; }
 .error { border: 1px solid #ef476f; color: #ff9aae; padding: 12px; border-radius: 12px; white-space: pre-wrap; background: #2a1018; }
 .formError { margin: 0; color: #ff9aae; }
@@ -78,7 +82,7 @@ pre { overflow: auto; background: #0c1324; padding: 10px; border-radius: 10px; }
 	@keyframes imagePulse { from { opacity:.45; transform:scale(.96); } to { opacity:1; transform:scale(1); } }
 	@keyframes imageBar { from { transform:scaleX(.35); opacity:.55; } to { transform:scaleX(1); opacity:1; } }
 	@media (max-width: 1100px) { .cards { grid-template-columns: repeat(3, 1fr); } .imageGrid { grid-template-columns:1fr; } }
-	@media (max-width: 720px) { main { padding: 14px; } header { align-items: flex-start; flex-direction: column; } .cards { grid-template-columns: repeat(2, 1fr); } .issue, .rewriteGroupHead, .rewriteRule, .rewriteTarget, .fallbackFields, .imageUsageStats, .imageEvent { grid-template-columns: 1fr; } .keyOptions { align-items:flex-start; flex-direction:column; } .imageRow { grid-template-columns:1fr; } .imageRow button { margin-bottom:0; } .historyActions { grid-template-columns:1fr; } }
+	@media (max-width: 720px) { main { padding: 14px; } header { align-items: flex-start; flex-direction: column; } .cards { grid-template-columns: repeat(2, 1fr); } .issue, .rewriteGroupHead, .rewriteRule, .rewriteTarget, .fallbackFields, .fallbackModelRow, .imageUsageStats, .imageEvent { grid-template-columns: 1fr; } .keyOptions { align-items:flex-start; flex-direction:column; } .imageRow { grid-template-columns:1fr; } .imageRow button { margin-bottom:0; } .historyActions { grid-template-columns:1fr; } }
 .historyPanel { margin-top:16px; }
 .historyHead { display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
 .historyHead h2 { min-width:0; }

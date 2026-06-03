@@ -143,6 +143,7 @@ export type ModelRewriteConfig = {
 export type FinalFallbackConfig = {
   enabled: boolean;
   model: string;
+  models?: string[];
 };
 
 export type ImageProxyConfig = {

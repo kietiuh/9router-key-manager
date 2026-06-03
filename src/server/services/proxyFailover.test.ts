@@ -184,6 +184,226 @@ describe('fetchUpstreamWithFailover', () => {
     result.lease.release();
   });
 
+  it('uses ordered final fallback models after rewrite targets fail', async () => {
+    const calls: string[] = [];
+    const limit = limiter();
+    const result = await fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/chat/completions',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1']),
+      finalFallback: { enabled: true, model: 'stable-a', models: ['stable-a', 'stable-b'] },
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
+      fetchImpl: async (_url, init) => {
+        calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+        return new Response('{}', { status: calls.length < 3 ? 500 : 200 });
+      },
+    });
+
+    expect(calls).toEqual(['v1', 'stable-a', 'stable-b']);
+    expect(result.model).toBe('stable-b');
+    expect(result.attemptCount).toBe(3);
+    result.lease.release();
+  });
+
+  it('retries the next final fallback model for final fallback 400 responses', async () => {
+    const calls: string[] = [];
+    const limit = limiter();
+    const result = await fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/chat/completions',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1']),
+      finalFallback: { enabled: true, model: 'stable-a', models: ['stable-a', 'stable-b'] },
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
+      fetchImpl: async (_url, init) => {
+        calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+        if (calls.length === 1) return new Response('{}', { status: 500 });
+        return new Response('{}', { status: calls.length === 2 ? 400 : 200 });
+      },
+    });
+
+    expect(calls).toEqual(['v1', 'stable-a', 'stable-b']);
+    expect(result.model).toBe('stable-b');
+    result.lease.release();
+  });
+
+  it('masks the last final fallback failure after all final fallback models fail', async () => {
+    const calls: string[] = [];
+    const limit = limiter();
+    let thrown: unknown;
+    try {
+      await fetchUpstreamWithFailover({
+        upstreamUrl: 'http://upstream/v1/chat/completions',
+        method: 'POST',
+        headers: new Headers({ 'content-type': 'application/json' }),
+        decision: rewriteDecision(['v1']),
+        finalFallback: { enabled: true, model: 'stable-a', models: ['stable-a', 'stable-b'] },
+        userId: 'user-1',
+        largeContextThresholdTokens: 1000,
+        modelRateLimiter: limit.modelRateLimiter,
+        upstreamTimeoutFor: limit.upstreamTimeoutFor,
+        fetchImpl: async (_url, init) => {
+          calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+          return new Response('{}', { status: 500 });
+        },
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(calls).toEqual(['v1', 'stable-a', 'stable-b']);
+    expect(thrown).toBeInstanceOf(ProxyFailoverError);
+    expect(thrown).toMatchObject({
+      statusCode: 429,
+      type: 'server_overloaded',
+      message: 'Server busy, retry later',
+      model: 'stable-b',
+      retryAfter: 10,
+      upstreamStatus: 500,
+    });
+  });
+
+  it('starts each request at the first final fallback model', async () => {
+    const allCalls: string[] = [];
+    const run = async () => {
+      const limit = limiter();
+      const result = await fetchUpstreamWithFailover({
+        upstreamUrl: 'http://upstream/v1/chat/completions',
+        method: 'POST',
+        headers: new Headers({ 'content-type': 'application/json' }),
+        decision: rewriteDecision(['v1']),
+        finalFallback: { enabled: true, model: 'stable-a', models: ['stable-a', 'stable-b'] },
+        userId: 'user-1',
+        largeContextThresholdTokens: 1000,
+        modelRateLimiter: limit.modelRateLimiter,
+        upstreamTimeoutFor: limit.upstreamTimeoutFor,
+        fetchImpl: async (_url, init) => {
+          const model = JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model;
+          allCalls.push(model);
+          return new Response('{}', { status: model === 'stable-a' ? 200 : 500 });
+        },
+      });
+      result.lease.release();
+      return result.model;
+    };
+
+    expect(await run()).toBe('stable-a');
+    expect(await run()).toBe('stable-a');
+    expect(allCalls).toEqual(['v1', 'stable-a', 'v1', 'stable-a']);
+  });
+
+  it('deduplicates final fallback models against prior attempts and each other', async () => {
+    const calls: string[] = [];
+    const limit = limiter();
+    const result = await fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/chat/completions',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1', 'stable-a']),
+      finalFallback: { enabled: true, model: 'stable-a', models: ['stable-a', 'stable-b', 'stable-b'] },
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
+      fetchImpl: async (_url, init) => {
+        calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+        return new Response('{}', { status: calls.length < 3 ? 500 : 200 });
+      },
+    });
+
+    expect(calls).toEqual(['v1', 'stable-a', 'stable-b']);
+    expect(result.model).toBe('stable-b');
+    result.lease.release();
+  });
+
+  it('retries the next final fallback model when a final fallback rate queue rejects', async () => {
+    const calls: string[] = [];
+    const acquired: string[] = [];
+    const result = await fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/chat/completions',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1']),
+      finalFallback: { enabled: true, model: 'stable-a', models: ['stable-a', 'stable-b'] },
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      modelRateLimiter: {
+        snapshot: () => [],
+        acquire: async (model: string) => {
+          acquired.push(model);
+          if (model === 'stable-a') {
+            const err = new Error('queue full') as Error & { type: string; retryAfter: number };
+            err.type = 'rate_queue_full';
+            err.retryAfter = 10;
+            throw err;
+          }
+          return { rateLimited: false, rateLimitModel: model, rateLimitRpm: null, rateQueuedMs: 0, release: () => {} };
+        },
+      },
+      upstreamTimeoutFor: () => 1000,
+      fetchImpl: async (_url, init) => {
+        calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+        return new Response('{}', { status: calls.length === 1 ? 500 : 200 });
+      },
+    });
+
+    expect(acquired).toEqual(['v1', 'stable-a', 'stable-b']);
+    expect(calls).toEqual(['v1', 'stable-b']);
+    expect(result.model).toBe('stable-b');
+    result.lease.release();
+  });
+
+  it('masks the last final fallback rate queue rejection as server overloaded', async () => {
+    const acquired: string[] = [];
+    let thrown: unknown;
+    try {
+      await fetchUpstreamWithFailover({
+        upstreamUrl: 'http://upstream/v1/chat/completions',
+        method: 'POST',
+        headers: new Headers({ 'content-type': 'application/json' }),
+        decision: rewriteDecision(['v1']),
+        finalFallback: { enabled: true, model: 'stable-a', models: ['stable-a'] },
+        userId: 'user-1',
+        largeContextThresholdTokens: 1000,
+        modelRateLimiter: {
+          snapshot: () => [],
+          acquire: async (model: string) => {
+            acquired.push(model);
+            if (model === 'stable-a') {
+              const err = new Error('queue full') as Error & { type: string; retryAfter: number };
+              err.type = 'rate_queue_full';
+              err.retryAfter = 10;
+              throw err;
+            }
+            return { rateLimited: false, rateLimitModel: model, rateLimitRpm: null, rateQueuedMs: 0, release: () => {} };
+          },
+        },
+        upstreamTimeoutFor: () => 1000,
+        fetchImpl: async () => new Response('{}', { status: 500 }),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(acquired).toEqual(['v1', 'stable-a']);
+    expect(thrown).toBeInstanceOf(ProxyFailoverError);
+    expect(thrown).toMatchObject({
+      statusCode: 429,
+      type: 'server_overloaded',
+      message: 'Server busy, retry later',
+      model: 'stable-a',
+      retryAfter: 10,
+      errorType: 'rate_queue_full',
+    });
+  });
+
   it('does not add final fallback when disabled', async () => {
     const calls: string[] = [];
     const limit = limiter();
