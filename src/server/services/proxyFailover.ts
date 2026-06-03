@@ -38,8 +38,14 @@ export class TrafficAcquireError extends Error {
 }
 
 export class ProxyFailoverError extends Error {
-  constructor(message: string, public readonly statusCode: number, public readonly type: string, public readonly cause: unknown, public readonly model: string) {
+  retryAfter?: number;
+  upstreamStatus?: number;
+  errorType?: string;
+  constructor(message: string, public readonly statusCode: number, public readonly type: string, public readonly cause: unknown, public readonly model: string, details: { retryAfter?: number; upstreamStatus?: number; errorType?: string } = {}) {
     super(message);
+    this.retryAfter = details.retryAfter;
+    this.upstreamStatus = details.upstreamStatus;
+    this.errorType = details.errorType;
   }
 }
 
@@ -64,17 +70,23 @@ export function isRetryableUpstreamStatus(status: number): boolean {
   return status === 401 || status === 413 || status === 429 || status >= 500;
 }
 
-function appendFallback(models: string[], decision: RewriteDecision | undefined, finalFallback: FinalFallbackConfig | undefined): string[] {
+type AttemptModel = {
+  model: string;
+  isFinalFallback: boolean;
+};
+
+function appendFallback(models: AttemptModel[], decision: RewriteDecision | undefined, finalFallback: FinalFallbackConfig | undefined): AttemptModel[] {
   const fallbackModel = finalFallback?.model?.trim();
   if (!finalFallback?.enabled || !fallbackModel || !decision?.parsedBody?.model) return models;
-  if (models.includes(fallbackModel)) return models;
-  return [...models, fallbackModel];
+  if (models.some(({ model }) => model === fallbackModel)) return models;
+  return [...models, { model: fallbackModel, isFinalFallback: true }];
 }
 
-function attemptModels(decision: RewriteDecision | undefined, finalFallback: FinalFallbackConfig | undefined, disableModelFallback = false): string[] {
+function attemptModels(decision: RewriteDecision | undefined, finalFallback: FinalFallbackConfig | undefined, disableModelFallback = false): AttemptModel[] {
   const firstModel = !decision ? 'unknown' : decision.rewritten && decision.targets.length ? decision.targets[0] : decision.model ?? 'unknown';
-  if (disableModelFallback) return [firstModel];
-  const models = !decision ? ['unknown'] : decision.rewritten && decision.targets.length ? decision.targets : [decision.model ?? 'unknown'];
+  if (disableModelFallback) return [{ model: firstModel, isFinalFallback: false }];
+  const modelNames = !decision ? ['unknown'] : decision.rewritten && decision.targets.length ? decision.targets : [decision.model ?? 'unknown'];
+  const models = modelNames.map(model => ({ model, isFinalFallback: false }));
   return appendFallback(models, decision, finalFallback);
 }
 
@@ -103,11 +115,16 @@ function errorStatus(err: any): { statusCode: number; type: string; message: str
   return { statusCode: 502, type: 'proxy_error', message: 'Upstream proxy error' };
 }
 
+function finalFallbackBusyError(cause: unknown, model: string, details: { upstreamStatus?: number; errorType?: string } = {}): ProxyFailoverError {
+  return new ProxyFailoverError('Server busy, retry later', 429, 'server_overloaded', cause, model, { retryAfter: 10, ...details });
+}
+
 export async function fetchUpstreamWithFailover(options: FetchUpstreamOptions): Promise<FetchUpstreamResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const models = attemptModels(options.decision, options.finalFallback, options.disableModelFallback);
   for (let attemptIndex = 0; attemptIndex < models.length; attemptIndex++) {
-    const model = models[attemptIndex];
+    const attempt = models[attemptIndex];
+    const model = attempt.model;
     const body = bodyForAttempt(options.decision, model);
     const bodyBytes = body?.length ?? 0;
     const estimatedInputTokens = estimateTokens(bodyBytes);
@@ -118,6 +135,12 @@ export async function fetchUpstreamWithFailover(options: FetchUpstreamOptions): 
     } catch (err: any) {
       throw new TrafficAcquireError(err?.message ?? 'model rate queue rejected', err, options.modelRateLimiter.snapshot(), model, attemptIndex, err?.type, err?.retryAfter);
     }
+    let leaseReleased = false;
+    const releaseLease = () => {
+      if (leaseReleased) return;
+      leaseReleased = true;
+      lease.release();
+    };
 
     const attemptHeaders = cloneHeaders(options.headers);
     if (body) attemptHeaders.set('content-length', String(body.length));
@@ -132,19 +155,29 @@ export async function fetchUpstreamWithFailover(options: FetchUpstreamOptions): 
       const upstreamMs = Date.now() - upstreamStarted;
       if (isRetryableUpstreamStatus(upstream.status) && attemptIndex < models.length - 1) {
         await cancelBody(upstream);
-        lease.release();
+        releaseLease();
         options.log?.({ model, attemptIndex, attemptCount: models.length, upstreamStatus: upstream.status, retryReason: 'retryable_status', timeoutMs, bodyBytes, estimatedInputTokens, isLargeContext, rateQueuedMs: lease.rateQueuedMs, rateLimitRpm: lease.rateLimitRpm, rateLimited: lease.rateLimited }, 'model failover retry');
         continue;
+      }
+      if (upstream.status >= 400 && attempt.isFinalFallback) {
+        await cancelBody(upstream);
+        releaseLease();
+        throw finalFallbackBusyError(undefined, model, { upstreamStatus: upstream.status });
       }
       return { upstream, lease, model, body, bodyBytes, estimatedInputTokens, isLargeContext, queuedMs: lease.rateQueuedMs, rateQueuedMs: lease.rateQueuedMs, rateLimitModel: lease.rateLimitModel, rateLimitRpm: lease.rateLimitRpm, rateLimited: lease.rateLimited, upstreamMs, timeoutMs, attemptIndex, attemptCount: models.length };
     } catch (err: any) {
       clearTimeout(timeout);
-      lease.release();
+      if (err instanceof ProxyFailoverError) {
+        releaseLease();
+        throw err;
+      }
+      releaseLease();
       if (attemptIndex < models.length - 1) {
         options.log?.({ model, attemptIndex, attemptCount: models.length, errorType: err?.name === 'AbortError' ? 'upstream_timeout' : 'proxy_error', error: err?.message, retryReason: 'request_error', timeoutMs, bodyBytes, estimatedInputTokens, isLargeContext, rateQueuedMs: lease.rateQueuedMs, rateLimitRpm: lease.rateLimitRpm, rateLimited: lease.rateLimited }, 'model failover retry');
         continue;
       }
       const status = errorStatus(err);
+      if (attempt.isFinalFallback) throw finalFallbackBusyError(err, model, { errorType: status.type });
       throw new ProxyFailoverError(status.message, status.statusCode, status.type, err, model);
     }
   }
