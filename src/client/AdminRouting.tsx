@@ -140,16 +140,42 @@ export function ModelRewritePanel({ config, onSave, saving }: { config: ModelRew
 
 export function FinalFallbackPanel({ config, onSave, saving }: { config: FinalFallbackConfig | null; onSave: (cfg: FinalFallbackConfig) => Promise<void>; saving: boolean }) {
   const [enabled, setEnabled] = useState(false);
-  const [model, setModel] = useState('');
+  const [models, setModels] = useState<string[]>(['']);
   const [dirty, setDirty] = useState(false);
-  useEffect(() => { if (dirty) return; setEnabled(Boolean(config?.enabled)); setModel(config?.model ?? ''); }, [config, dirty]);
-  const missingModel = finalFallbackNeedsModel({ enabled, model });
+  useEffect(() => {
+    if (dirty) return;
+    setEnabled(Boolean(config?.enabled));
+    setModels(config?.models?.length ? config.models : [config?.model ?? '']);
+  }, [config, dirty]);
+  const patchModel = (idx: number, value: string) => {
+    setDirty(true);
+    setModels(models.map((model, i) => i === idx ? value : model));
+  };
+  const addModel = () => {
+    setDirty(true);
+    setModels([...models, '']);
+  };
+  const removeModel = (idx: number) => {
+    setDirty(true);
+    const next = models.filter((_, i) => i !== idx);
+    setModels(next.length ? next : ['']);
+  };
+  const moveModel = (idx: number, direction: -1 | 1) => {
+    const nextIdx = idx + direction;
+    if (nextIdx < 0 || nextIdx >= models.length) return;
+    setDirty(true);
+    const next = [...models];
+    [next[idx], next[nextIdx]] = [next[nextIdx], next[idx]];
+    setModels(next);
+  };
+  const cleanModels = models.map(model => model.trim()).filter(Boolean);
+  const missingModel = finalFallbackNeedsModel({ enabled, model: cleanModels[0] ?? '', models: cleanModels });
   const save = async () => {
     if (missingModel) return;
-    await onSave({ enabled, model: model.trim() });
+    await onSave({ enabled, model: cleanModels[0] ?? '', models: cleanModels });
     setDirty(false);
   };
-  return <section className="attention fallbackPanel"><h2>Cấu hình ngoài cùng — Final fallback</h2><div className="fallbackFields"><label><input type="checkbox" checked={enabled} onChange={e => { setDirty(true); setEnabled(e.target.checked); }} /> Enable final fallback</label><label>Fallback model<input value={model} onChange={e => { setDirty(true); setModel(e.target.value); }} placeholder="stable/model" /></label></div>{missingModel && <p className="formError">Fallback model is required when enabled.</p>}<div className="actions"><button onClick={save} disabled={saving || missingModel}>{saving ? 'Saving...' : 'Save final fallback'}{dirty ? ' *' : ''}</button></div></section>;
+  return <section className="attention fallbackPanel"><h2>Cấu hình ngoài cùng — Final fallback</h2><div className="fallbackFields"><label><input type="checkbox" checked={enabled} onChange={e => { setDirty(true); setEnabled(e.target.checked); }} /> Enable final fallback</label><div className="fallbackModels"><span>Fallback models</span>{models.map((model, idx) => <div className="fallbackModelRow" key={idx}><input value={model} onChange={e => patchModel(idx, e.target.value)} placeholder={idx === 0 ? 'stable/a' : 'stable/b'} /><button type="button" onClick={() => moveModel(idx, -1)} disabled={idx === 0}>Up</button><button type="button" onClick={() => moveModel(idx, 1)} disabled={idx === models.length - 1}>Down</button><button type="button" onClick={() => removeModel(idx)}>Remove</button></div>)}<button type="button" onClick={addModel}>Add model</button></div></div>{missingModel && <p className="formError">At least one fallback model is required when enabled.</p>}<div className="actions"><button onClick={save} disabled={saving || missingModel}>{saving ? 'Saving...' : 'Save final fallback'}{dirty ? ' *' : ''}</button></div></section>;
 }
 
 export function ImageProxyPanel({ config, onSave, saving }: { config: ImageProxyConfig | null; onSave: (cfg: ImageProxyConfig) => Promise<void>; saving: boolean }) {

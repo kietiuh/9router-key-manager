@@ -1,4 +1,5 @@
 import { buildRewriteBody, type RewriteDecision } from './modelRewriteProxy.js';
+import { normalizeFinalFallbackModels } from '../../shared/finalFallback.js';
 import type { FinalFallbackConfig } from './finalFallback.js';
 import type { ModelRateLimitLease } from './modelRateLimiter.js';
 
@@ -76,10 +77,14 @@ type AttemptModel = {
 };
 
 function appendFallback(models: AttemptModel[], decision: RewriteDecision | undefined, finalFallback: FinalFallbackConfig | undefined): AttemptModel[] {
-  const fallbackModel = finalFallback?.model?.trim();
-  if (!finalFallback?.enabled || !fallbackModel || !decision?.parsedBody?.model) return models;
-  if (models.some(({ model }) => model === fallbackModel)) return models;
-  return [...models, { model: fallbackModel, isFinalFallback: true }];
+  if (!finalFallback?.enabled || !decision?.parsedBody?.model) return models;
+  const seen = new Set(models.map(({ model }) => model));
+  const fallbackModels = normalizeFinalFallbackModels(finalFallback).filter(model => {
+    if (seen.has(model)) return false;
+    seen.add(model);
+    return true;
+  });
+  return [...models, ...fallbackModels.map(model => ({ model, isFinalFallback: true }))];
 }
 
 function attemptModels(decision: RewriteDecision | undefined, finalFallback: FinalFallbackConfig | undefined, disableModelFallback = false): AttemptModel[] {
@@ -119,6 +124,16 @@ function finalFallbackBusyError(cause: unknown, model: string, details: { upstre
   return new ProxyFailoverError('Server busy, retry later', 429, 'server_overloaded', cause, model, { retryAfter: 10, ...details });
 }
 
+function hasLaterAttempt(models: AttemptModel[], attemptIndex: number): boolean {
+  return attemptIndex < models.length - 1;
+}
+
+function shouldRetryStatus(upstreamStatus: number, attempt: AttemptModel, models: AttemptModel[], attemptIndex: number): boolean {
+  if (!hasLaterAttempt(models, attemptIndex)) return false;
+  if (attempt.isFinalFallback && upstreamStatus >= 400) return true;
+  return isRetryableUpstreamStatus(upstreamStatus);
+}
+
 export async function fetchUpstreamWithFailover(options: FetchUpstreamOptions): Promise<FetchUpstreamResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const models = attemptModels(options.decision, options.finalFallback, options.disableModelFallback);
@@ -133,6 +148,14 @@ export async function fetchUpstreamWithFailover(options: FetchUpstreamOptions): 
     try {
       lease = await options.modelRateLimiter.acquire(model);
     } catch (err: any) {
+      if (attempt.isFinalFallback) {
+        const errorType = err?.type ?? 'rate_queue_full';
+        if (hasLaterAttempt(models, attemptIndex)) {
+          options.log?.({ model, attemptIndex, attemptCount: models.length, errorType, error: err?.message, retryReason: 'rate_queue_rejected', bodyBytes, estimatedInputTokens, isLargeContext }, 'model failover retry');
+          continue;
+        }
+        throw finalFallbackBusyError(err, model, { errorType });
+      }
       throw new TrafficAcquireError(err?.message ?? 'model rate queue rejected', err, options.modelRateLimiter.snapshot(), model, attemptIndex, err?.type, err?.retryAfter);
     }
     let leaseReleased = false;
@@ -153,7 +176,7 @@ export async function fetchUpstreamWithFailover(options: FetchUpstreamOptions): 
       const upstream = await fetchImpl(options.upstreamUrl, { method: options.method, headers: attemptHeaders, body: body as any, duplex: 'half', signal: controller.signal });
       clearTimeout(timeout);
       const upstreamMs = Date.now() - upstreamStarted;
-      if (isRetryableUpstreamStatus(upstream.status) && attemptIndex < models.length - 1) {
+      if (shouldRetryStatus(upstream.status, attempt, models, attemptIndex)) {
         await cancelBody(upstream);
         releaseLease();
         options.log?.({ model, attemptIndex, attemptCount: models.length, upstreamStatus: upstream.status, retryReason: 'retryable_status', timeoutMs, bodyBytes, estimatedInputTokens, isLargeContext, rateQueuedMs: lease.rateQueuedMs, rateLimitRpm: lease.rateLimitRpm, rateLimited: lease.rateLimited }, 'model failover retry');
@@ -172,7 +195,7 @@ export async function fetchUpstreamWithFailover(options: FetchUpstreamOptions): 
         throw err;
       }
       releaseLease();
-      if (attemptIndex < models.length - 1) {
+      if (hasLaterAttempt(models, attemptIndex)) {
         options.log?.({ model, attemptIndex, attemptCount: models.length, errorType: err?.name === 'AbortError' ? 'upstream_timeout' : 'proxy_error', error: err?.message, retryReason: 'request_error', timeoutMs, bodyBytes, estimatedInputTokens, isLargeContext, rateQueuedMs: lease.rateQueuedMs, rateLimitRpm: lease.rateLimitRpm, rateLimited: lease.rateLimited }, 'model failover retry');
         continue;
       }
