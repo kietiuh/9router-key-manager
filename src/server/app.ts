@@ -34,6 +34,7 @@ import { createApiKeyCache } from './services/apiKeyCache.js';
 import { buildTrafficLogMeta } from './services/trafficLog.js';
 import { nineRouterLogMetrics } from './services/nineRouterLogMetrics.js';
 import { resolvedPolicies as readResolvedPolicies, usageFiltersForPolicies, usageImportSince } from './services/policyUsage.js';
+import { createPublicImageJobQueue, type PublicImageResult } from './services/publicImageJobs.js';
 
 export type ServerAppOptions = {
   adminPassword?: string;
@@ -287,17 +288,9 @@ app.post('/api/public/images/optimize-prompt', async (req, reply) => {
 });
 
 
-type PublicImageResult = { image: string; mimeType: string; filename: string; revisedPrompt?: string; prompt: string; bytes: number; expiresAt?: string };
-type ImageJob = { id: string; keyId: string; key: string; prompt: string; size: string; status: 'queued' | 'running' | 'success' | 'error' | 'cancelled'; createdAt: number; updatedAt: number; result?: PublicImageResult; error?: string };
-const imageJobs = new Map<string, ImageJob>();
-const imageQueue: ImageJob[] = [];
 const imageQueueMaxGlobal = Number(process.env.PUBLIC_IMAGE_QUEUE_GLOBAL ?? 3);
 const imageQueueMaxPerKey = Number(process.env.PUBLIC_IMAGE_QUEUE_PER_KEY ?? 2);
 const imageJobTtlMs = Number(process.env.PUBLIC_IMAGE_JOB_TTL_MINUTES ?? 60) * 60 * 1000;
-function runningImageJobs(keyId?: string) { return [...imageJobs.values()].filter(j => j.status === 'running' && (!keyId || j.keyId === keyId)).length; }
-function queuePosition(jobId: string) { const i = imageQueue.findIndex(j => j.id === jobId && j.status === 'queued'); return i >= 0 ? i + 1 : null; }
-function publicJob(job: ImageJob) { return { jobId: job.id, status: job.status, queuePosition: queuePosition(job.id), createdAt: new Date(job.createdAt).toISOString(), updatedAt: new Date(job.updatedAt).toISOString(), error: job.error, result: job.result }; }
-function cleanupImageJobs() { const cutoff = Date.now() - imageJobTtlMs; for (const [id, job] of imageJobs) if (job.updatedAt < cutoff && job.status !== 'queued' && job.status !== 'running') imageJobs.delete(id); }
 async function runPublicImageGeneration(match: any, prompt: string, size: string): Promise<PublicImageResult> {
   ensureImageDailyQuota(match.id);
   const imageProxyConfig = getImageProxyConfig(db);
@@ -327,70 +320,46 @@ async function runPublicImageGeneration(match: any, prompt: string, size: string
   app.log.info({ keyId: match.id, model: imageModel, size, bytes, estimatedTokens: usage.total, totalMs: Date.now() - started }, 'public image generated');
   return { image, mimeType: 'image/png', filename: publicImageFilename(), revisedPrompt, prompt: payload.prompt, bytes, expiresAt: stored.expiresAt };
 }
-function scheduleImageJobs() {
-  cleanupImageJobs();
-  while (runningImageJobs() < imageQueueMaxGlobal) {
-    const idx = imageQueue.findIndex(j => j.status === 'queued' && runningImageJobs(j.keyId) < imageQueueMaxPerKey);
-    if (idx < 0) return;
-    const job = imageQueue.splice(idx, 1)[0];
-    job.status = 'running'; job.updatedAt = Date.now();
-    runPublicImageGeneration({ id: job.keyId, key: job.key }, job.prompt, job.size).then(result => {
-      job.status = 'success'; job.result = result; job.updatedAt = Date.now(); scheduleImageJobs();
-    }).catch((err: any) => {
-      job.status = 'error'; job.error = err?.message || 'image generation failed'; job.updatedAt = Date.now(); scheduleImageJobs();
-    });
-  }
-}
-function createImageJob(match: any, prompt: string, size: string) {
-  cleanupImageJobs();
-  const job: ImageJob = { id: crypto.randomUUID(), keyId: match.id, key: match.key, prompt, size, status: 'queued', createdAt: Date.now(), updatedAt: Date.now() };
-  imageJobs.set(job.id, job); imageQueue.push(job); scheduleImageJobs(); return publicJob(job);
-}
+const publicImageJobs = createPublicImageJobQueue({
+  maxGlobal: imageQueueMaxGlobal,
+  maxPerKey: imageQueueMaxPerKey,
+  ttlMs: imageJobTtlMs,
+  generate: job => runPublicImageGeneration({ id: job.keyId, key: job.key }, job.prompt, job.size),
+});
 
 app.post('/api/public/images/jobs', async (req, reply) => {
   const body = PublicImageJobBody.parse(req.body);
   const match = findPublicKey(body.key);
   if (!match) return reply.code(401).send({ error: 'invalid key' });
-  return createImageJob(match, guardImagePrompt(body.prompt), body.size ?? '1024x1024');
+  return publicImageJobs.createJob(match, guardImagePrompt(body.prompt), body.size ?? '1024x1024');
 });
 app.post('/api/public/images/jobs/status', async (req, reply) => {
   const body = PublicImageJobStatusBody.parse(req.body);
   const match = findPublicKey(body.key);
   if (!match) return reply.code(401).send({ error: 'invalid key' });
-  const job = imageJobs.get(body.jobId);
-  if (!job || job.keyId !== match.id) return reply.code(404).send({ error: 'job not found' });
-  return publicJob(job);
+  const job = publicImageJobs.getJob(body.jobId, match.id);
+  if (!job) return reply.code(404).send({ error: 'job not found' });
+  return job;
 });
 app.post('/api/public/images/jobs/cancel', async (req, reply) => {
   const body = PublicImageJobStatusBody.parse(req.body);
   const match = findPublicKey(body.key);
   if (!match) return reply.code(401).send({ error: 'invalid key' });
-  const job = imageJobs.get(body.jobId);
-  if (!job || job.keyId !== match.id) return reply.code(404).send({ error: 'job not found' });
-  if (job.status !== 'queued') return reply.code(409).send({ error: 'image generation already started' });
-  job.status = 'cancelled'; job.updatedAt = Date.now();
-  const idx = imageQueue.findIndex(j => j.id === job.id); if (idx >= 0) imageQueue.splice(idx, 1);
-  scheduleImageJobs();
-  return publicJob(job);
+  try {
+    const job = publicImageJobs.cancelJob(body.jobId, match.id);
+    if (!job) return reply.code(404).send({ error: 'job not found' });
+    return job;
+  } catch {
+    return reply.code(409).send({ error: 'image generation already started' });
+  }
 });
-function waitForImageJob(jobId: string, timeoutMs = 180000) {
-  return new Promise<ImageJob>((resolve, reject) => {
-    const started = Date.now();
-    const timer = setInterval(() => {
-      const job = imageJobs.get(jobId);
-      if (!job) { clearInterval(timer); reject(new Error('job not found')); return; }
-      if (job.status === 'success' || job.status === 'error' || job.status === 'cancelled') { clearInterval(timer); resolve(job); return; }
-      if (Date.now() - started > timeoutMs) { clearInterval(timer); reject(new Error('image generation timeout')); }
-    }, 1000);
-  });
-}
 app.post('/api/public/images/generate', async (req, reply) => {
   const body = PublicImageGenerateBody.parse(req.body);
   const match = findPublicKey(body.key);
   if (!match) return reply.code(401).send({ error: 'invalid key' });
-  const created = createImageJob(match, guardImagePrompt(body.prompt), body.size ?? '1024x1024');
+  const created = publicImageJobs.createJob(match, guardImagePrompt(body.prompt), body.size ?? '1024x1024');
   try {
-    const job = await waitForImageJob(created.jobId);
+    const job = await publicImageJobs.waitForJob(created.jobId);
     if (job.status === 'success' && job.result) return job.result;
     return reply.code(job.status === 'cancelled' ? 409 : 502).send({ error: job.error || job.status });
   } catch (err: any) { return reply.code(202).send({ ...created, error: err?.message || 'image generation queued' }); }
