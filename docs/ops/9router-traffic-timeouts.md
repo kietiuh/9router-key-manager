@@ -6,6 +6,8 @@ This runbook separates three controls on `/v1/*` traffic:
 - Model RPM limiting controls when key-manager starts requests to 9router.
 - Upstream timeouts control how long an active upstream attempt may run before key-manager aborts it.
 
+Implementation note: `/v1/*` route registration and interceptor order currently live in `src/server/routes/proxy.ts`; upstream retry/fallback attempts remain in `src/server/services/proxyFailover.ts`. Treat this runbook as a snapshot and re-check current code/runtime after each refactor phase.
+
 ## API-Key Client Rate Limiting
 
 Client rate limiting is configured in the admin UI under `Giám sát 9router`.
