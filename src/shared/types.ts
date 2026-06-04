@@ -175,6 +175,22 @@ export type ModelRateLimitSnapshot = {
   nextAvailableAt: number;
 };
 
+export type ClientRateLimitConfig = {
+  enabled: boolean;
+  rpm: number;
+  concurrency: number;
+};
+
+export type ClientRateLimitSnapshot = {
+  keyId: string;
+  enabled: boolean;
+  rpm: number;
+  concurrency: number;
+  requestCount: number;
+  active: number;
+  resetAt: number | null;
+};
+
 export type TrafficLatencySummary = {
   avg: number;
   max: number;

@@ -18,6 +18,11 @@ const base = {
   upstreamStatus: 200,
   attemptIndex: 0,
   attemptCount: 1,
+  clientRateLimited: true,
+  clientRateLimitRpm: 30,
+  clientConcurrencyLimit: 5,
+  clientRateRemaining: 12,
+  clientActive: 3,
   limiter: [{ name: 'global', active: 1, queued: 0 }],
 };
 
@@ -32,6 +37,16 @@ describe('trafficLog', () => {
       rateLimitModel: 'v4/gpt-5.5',
       rateLimitRpm: 12,
       rateLimited: true,
+    });
+  });
+
+  it('includes API-key client limiter metadata in success logs', () => {
+    expect(buildTrafficLogMeta(base)).toMatchObject({
+      clientRateLimited: true,
+      clientRateLimitRpm: 30,
+      clientConcurrencyLimit: 5,
+      clientRateRemaining: 12,
+      clientActive: 3,
     });
   });
 

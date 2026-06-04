@@ -21,11 +21,13 @@ import { createFinalFallbackStore } from './services/finalFallback.js';
 import { fetchUpstreamWithFailover, ProxyFailoverError, TrafficAcquireError } from './services/proxyFailover.js';
 import { ModelRateLimiter, type ModelRateLimitLease } from './services/modelRateLimiter.js';
 import { createModelRateLimitConfigStore } from './services/modelRateLimitConfig.js';
+import { buildClientRateLimitErrorBody, ClientRateLimitAcquireError, ClientRateLimiter, type ClientRateLimitLease } from './services/clientRateLimiter.js';
+import { createClientRateLimitConfigStore } from './services/clientRateLimitConfig.js';
 import { readUpstreamTimeoutConfig, timeoutForModel } from './services/upstreamTimeouts.js';
 import { buildImageProxyUrl, getImageProxyConfig, isImageProxyPath, maybeRewriteImageModel, parseImageUsage, saveImageProxyConfig } from './services/imageProxy.js';
 import { enhanceImagePrompt } from './services/publicImage.js';
 import { imageProxyNeedsServerKey } from '../shared/imageProxy.js';
-import { buildQuotaErrorBody, evaluateQuotaInterceptor } from './services/quotaInterceptor.js';
+import { buildQuotaErrorBody, evaluateQuotaInterceptor, extractBearerToken } from './services/quotaInterceptor.js';
 import { buildKeyExpiredErrorBody, evaluateKeyAccessInterceptor } from './services/keyAccessInterceptor.js';
 import { maybeUnlockQuotaLockout } from './services/quotaUnlock.js';
 import { buildConfigStatus } from './configStatus.js';
@@ -47,6 +49,8 @@ const db = openDb();
 const upstreamTimeoutConfig = readUpstreamTimeoutConfig(process.env);
 const modelRateLimitStore = createModelRateLimitConfigStore(db);
 const modelRateLimiter = new ModelRateLimiter(modelRateLimitStore.get());
+const clientRateLimitStore = createClientRateLimitConfigStore(db);
+const clientRateLimiter = new ClientRateLimiter(clientRateLimitStore.get());
 const includeLimiterInSuccessLogs = process.env.TRAFFIC_LOG_LIMITER_SNAPSHOT === 'true';
 const publicImageDir = process.env.PUBLIC_IMAGE_DIR ?? path.join(os.homedir(), '.local/state/9router-key-manager/public-images');
 const publicImageTtlMs = Number(process.env.PUBLIC_IMAGE_TTL_HOURS ?? 24) * 60 * 60 * 1000;
@@ -77,6 +81,7 @@ const FinalFallbackConfigBody = z.object({ enabled: z.boolean(), model: z.string
 const ImageProxyConfigBody = z.object({ enabled: z.boolean(), upstreamBaseUrl: z.string(), authMode: z.enum(['pass-through', 'server-key']), modelOverride: z.string().optional() });
 const ModelRateLimitRuleBody = z.object({ model: z.string(), enabled: z.boolean(), rpm: z.number().positive(), queueLimit: z.number().int().nonnegative(), maxQueueWaitMs: z.number().positive() });
 const ModelRateLimitConfigBody = z.object({ enabled: z.boolean(), rules: z.array(ModelRateLimitRuleBody) });
+const ClientRateLimitConfigBody = z.object({ enabled: z.boolean(), rpm: z.number().positive(), concurrency: z.number().int().positive() });
 
 function isAuthed(req: any) { return req.unsignCookie(req.cookies?.admin_session ?? '').valid; }
 async function requireAuth(req: any, reply: any) { if (!isAuthed(req)) return reply.code(401).send({ error: 'unauthorized' }); }
@@ -230,6 +235,10 @@ function extractImageBase64(json: any) {
 }
 function publicImageFilename() { return `gocinema-image-${new Date().toISOString().replace(/[:.]/g, '-')}.png`; }
 function maskedUser(req: any) { const auth = String(req.headers?.authorization ?? ''); if (auth) return crypto.createHash('sha256').update(auth).digest('hex').slice(0, 12); return String(req.ip ?? 'unknown'); }
+function clientRateLimitKey(token: string, key?: { id: string }) {
+  if (key?.id) return key.id;
+  return `unknown:${crypto.createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
+}
 function configStatus() { return buildConfigStatus(); }
 
 app.get('/api/health', async () => ({ ok: true, service: '9router-key-manager' }));
@@ -455,19 +464,43 @@ app.register(async proxyRoutes => {
       return reply.code(429).send(buildQuotaErrorBody(quota));
     }
 
+    const clientToken = extractBearerToken(req.headers.authorization);
+    const clientKey = clientToken ? lookupKey(clientToken) : undefined;
+    const clientLimitKey = clientToken ? clientRateLimitKey(clientToken, clientKey) : undefined;
+    let clientLease: ClientRateLimitLease | undefined;
+    let clientLeaseReleased = false;
+    const releaseClientLease = () => {
+      if (clientLeaseReleased) return;
+      clientLeaseReleased = true;
+      clientLease?.release();
+    };
+    if (clientLimitKey) {
+      try {
+        clientLease = clientRateLimiter.acquire(clientLimitKey);
+      } catch (err: any) {
+        if (err instanceof ClientRateLimitAcquireError) {
+          req.log.warn({ keyId: err.keyId, errorType: err.type, retryAfter: err.retryAfter, resetAt: err.resetAt, limiter: err.snapshot }, 'client rate limited request rejected');
+          reply.header('retry-after', String(err.retryAfter));
+          if (err.resetAt) reply.header('x-ratelimit-reset', err.resetAt);
+          return reply.code(err.statusCode).send(buildClientRateLimitErrorBody(err));
+        }
+        throw err;
+      }
+    }
+
     const imageProxyConfig = getImageProxyConfig(db);
     if (imageProxyConfig.enabled && isImageProxyPath(req.raw.url?.split('?')[0] ?? '') && method !== 'GET' && method !== 'HEAD') {
-      if (imageProxyNeedsServerKey(imageProxyConfig)) {
-        const serverKey = process.env.IMAGE_PROXY_API_KEY;
-        if (!serverKey) return reply.code(503).send({ error: { message: 'Image proxy server key is not configured', type: 'image_proxy_config' } });
-        headers.set('authorization', `Bearer ${serverKey}`);
-      }
-      const body = maybeRewriteImageModel(rawBody, req.headers['content-type'], imageProxyConfig.modelOverride);
-      if (body) headers.set('content-length', String(body.length));
-      else headers.delete('content-length');
       const totalStarted = Date.now();
-      const upstreamStarted = Date.now();
       try {
+        if (imageProxyNeedsServerKey(imageProxyConfig)) {
+          const serverKey = process.env.IMAGE_PROXY_API_KEY;
+          if (!serverKey) return reply.code(503).send({ error: { message: 'Image proxy server key is not configured', type: 'image_proxy_config' } });
+          headers.set('authorization', `Bearer ${serverKey}`);
+        }
+        const body = maybeRewriteImageModel(rawBody, req.headers['content-type'], imageProxyConfig.modelOverride);
+        if (body) headers.set('content-length', String(body.length));
+        else headers.delete('content-length');
+        const upstreamStarted = Date.now();
         const upstream = await fetch(buildImageProxyUrl(imageProxyConfig, req.raw.url ?? '/v1/images/generations'), { method, headers, body: body as any, duplex: 'half' } as RequestInit & { duplex: 'half' });
         const upstreamMs = Date.now() - upstreamStarted;
         const responseBuffer = Buffer.from(await upstream.arrayBuffer());
@@ -475,6 +508,8 @@ app.register(async proxyRoutes => {
         recordImageProxyUsage(usage);
         req.log.info({ upstreamBaseUrl: imageProxyConfig.upstreamBaseUrl, upstreamStatus: upstream.status, upstreamMs, totalMs: Date.now() - totalStarted, bodyBytes: body?.length ?? 0, responseBytes: responseBuffer.length }, 'image request proxied direct');
         reply.header('x-image-proxy', 'direct');
+        if (clientLease?.clientRateRemaining != null) reply.header('x-ratelimit-remaining', String(clientLease.clientRateRemaining));
+        if (clientLease?.clientRateResetAt) reply.header('x-ratelimit-reset', clientLease.clientRateResetAt);
         reply.header('x-upstream-time-ms', String(upstreamMs));
         reply.code(upstream.status);
         upstream.headers.forEach((value, key) => {
@@ -485,6 +520,8 @@ app.register(async proxyRoutes => {
         req.log.error({ error: err?.message, totalMs: Date.now() - totalStarted }, 'image direct proxy failed');
         recordImageProxyUsage({ kind: 'proxy', model: imageProxyConfig.modelOverride || 'unknown', status: 'error', error: err?.message, imageCount: 1 });
         return reply.code(502).send({ error: { message: 'Image upstream proxy error', type: 'image_proxy_error' } });
+      } finally {
+        releaseClientLease();
       }
     }
 
@@ -504,6 +541,7 @@ app.register(async proxyRoutes => {
     let lease: ModelRateLimitLease | undefined;
     let result;
     let releaseOnFinally = true;
+    let releaseClientOnFinally = true;
     try {
       result = await fetchUpstreamWithFailover({
         upstreamUrl: `${nineRouterUpstream}${req.raw.url}`,
@@ -536,8 +574,15 @@ app.register(async proxyRoutes => {
         upstreamStatus: result.upstream.status,
         attemptIndex: result.attemptIndex,
         attemptCount: result.attemptCount,
+        clientRateLimited: clientLease?.clientLimited ?? false,
+        clientRateLimitRpm: clientLease?.clientRateLimitRpm ?? null,
+        clientConcurrencyLimit: clientLease?.clientConcurrencyLimit ?? null,
+        clientRateRemaining: clientLease?.clientRateRemaining ?? null,
+        clientActive: clientLease?.clientActive ?? 0,
         limiter: modelRateLimiter.snapshot(),
       }, { includeLimiter: includeLimiterInSuccessLogs }), 'traffic proxied request');
+      if (clientLease?.clientRateRemaining != null) reply.header('x-ratelimit-remaining', String(clientLease.clientRateRemaining));
+      if (clientLease?.clientRateResetAt) reply.header('x-ratelimit-reset', clientLease.clientRateResetAt);
       reply.header('x-rate-queue-time-ms', String(result.rateQueuedMs));
       reply.header('x-upstream-time-ms', String(result.upstreamMs));
       reply.code(result.upstream.status);
@@ -548,16 +593,23 @@ app.register(async proxyRoutes => {
       const stream = Readable.fromWeb(result.upstream.body as any);
       const streamLease = result.lease;
       releaseOnFinally = false;
+      releaseClientOnFinally = false;
       let streamLeaseReleased = false;
       const releaseStreamLease = () => {
         if (streamLeaseReleased) return;
         streamLeaseReleased = true;
         streamLease.release();
+        releaseClientLease();
       };
       stream.once('close', releaseStreamLease);
       stream.once('error', releaseStreamLease);
       stream.once('end', releaseStreamLease);
-      return reply.send(stream);
+      try {
+        return reply.send(stream);
+      } catch (sendErr) {
+        releaseStreamLease();
+        throw sendErr;
+      }
     } catch (err: any) {
       if (err instanceof TrafficAcquireError) {
         if (err.attemptIndex === 0 && rewritePlan) rollbackModelRewriteSelection(db, rewritePlan);
@@ -574,6 +626,7 @@ app.register(async proxyRoutes => {
       return reply.code(502).send({ error: { message: 'Upstream proxy error', type: 'proxy_error' } });
     } finally {
       if (releaseOnFinally) lease?.release();
+      if (releaseClientOnFinally) releaseClientLease();
     }
   });
 });
@@ -593,6 +646,12 @@ app.register(async protectedRoutes => {
   protectedRoutes.put('/api/model-rate-limit/config', async (req) => {
     const next = modelRateLimitStore.save(ModelRateLimitConfigBody.parse(req.body));
     modelRateLimiter.updateConfig(next);
+    return next;
+  });
+  protectedRoutes.get('/api/client-rate-limit/config', async () => clientRateLimitStore.get());
+  protectedRoutes.put('/api/client-rate-limit/config', async (req) => {
+    const next = clientRateLimitStore.save(ClientRateLimitConfigBody.parse(req.body));
+    clientRateLimiter.updateConfig(next);
     return next;
   });
   protectedRoutes.get('/api/image-proxy/config', async () => getImageProxyConfig(db));

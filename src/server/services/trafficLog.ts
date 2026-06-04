@@ -15,6 +15,11 @@ export type TrafficLogMeta = {
   upstreamStatus: number;
   attemptIndex: number;
   attemptCount: number;
+  clientRateLimited: boolean;
+  clientRateLimitRpm: number | null;
+  clientConcurrencyLimit: number | null;
+  clientRateRemaining: number | null;
+  clientActive: number;
   limiter?: unknown;
 };
 
@@ -39,6 +44,11 @@ export function buildTrafficLogMeta(
     upstreamStatus,
     attemptIndex,
     attemptCount,
+    clientRateLimited,
+    clientRateLimitRpm,
+    clientConcurrencyLimit,
+    clientRateRemaining,
+    clientActive,
     limiter,
   } = input;
   const meta: TrafficLogMeta = {
@@ -58,6 +68,11 @@ export function buildTrafficLogMeta(
     upstreamStatus,
     attemptIndex,
     attemptCount,
+    clientRateLimited,
+    clientRateLimitRpm,
+    clientConcurrencyLimit,
+    clientRateRemaining,
+    clientActive,
   };
   if (options.includeLimiter) meta.limiter = limiter;
   return meta;

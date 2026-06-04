@@ -87,6 +87,7 @@ Important variables:
 - `NINE_ROUTER_UPSTREAM`: 9router API base URL; production uses `http://127.0.0.1:20128`.
 - `TRAFFIC_UPSTREAM_TIMEOUTS`: optional active-upstream deadline policy in `model:normalMs:largeContextMs` format.
 - `TRAFFIC_LARGE_CONTEXT_TOKENS`: request-size threshold for large-context upstream deadlines; defaults to `100000`.
+- API-key client rate limiting defaults to `30` RPM and `5` concurrent `/v1/*` requests per key. Configure it from the admin traffic tab; it is stored in `manager.sqlite`, not env.
 - Model RPM limiting is configured from the admin traffic tab and stored in `manager.sqlite`, not env.
 - `TRAFFIC_LOG_LIMITER_SNAPSHOT`: set to `true` only when debugging RPM queue state on successful proxy requests; defaults to compact success logs.
 - `IMAGE_PROXY_API_KEY`: server-side image upstream key for `authMode: server-key`; never expose or commit it.
