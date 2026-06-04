@@ -1,41 +1,13 @@
 import type Database from 'better-sqlite3';
 import { readApiKeys, readUsageHistorySince } from '../parsers/reader.js';
 import { summarizeKeyUsage } from './usage.js';
-import { ingestUsageHistory, latestStoredUsageTimestamp, readStoredUsageForKeys } from './usageStore.js';
+import { ingestUsageHistory, readStoredUsageForKeys } from './usageStore.js';
 import { evaluateLimits, shouldEmitAlert, writeAudit } from './policies.js';
 import { atomicDisableApiKey, atomicEnableApiKey } from './atomic9router.js';
-import { resolveWindow } from '../utils/time.js';
 import { enqueueBotQuotaAlertJobs } from './botAlertQueue.js';
+import { resolvedPolicies, usageFiltersForPolicies, usageImportSince } from './policyUsage.js';
 
 export type WatcherOptions = { baseDir?: string; hardDisable?: boolean };
-
-function resolvedPolicies(db: Database.Database) {
-  const events = db.prepare('SELECT key_id, multiplier, effective_at FROM usage_multiplier_events ORDER BY effective_at ASC, id ASC').all() as Array<{ key_id: string; multiplier: number; effective_at: string }>;
-  const byKey = new Map<string, Array<{ multiplier: number; effective_at: string }>>();
-  for (const e of events) {
-    const arr = byKey.get(e.key_id) ?? [];
-    arr.push({ multiplier: Number(e.multiplier), effective_at: e.effective_at });
-    byKey.set(e.key_id, arr);
-  }
-  return (db.prepare('SELECT * FROM key_policies').all() as any[]).map(p => {
-    const w = resolveWindow({ window_start: p.window_start, window_end: p.window_end, reset_policy: p.reset_policy });
-    return { ...p, window_start: w.windowStart, window_end: w.windowEnd, reset_policy: w.resetPolicy, usage_multiplier_events: byKey.get(p.key_id) ?? [] };
-  });
-}
-
-function usageImportSince(db: Database.Database) {
-  const latest = latestStoredUsageTimestamp(db);
-  if (!latest) return undefined;
-  const latestMs = Date.parse(latest);
-  if (!Number.isFinite(latestMs)) return latest;
-  const overlapMs = Number(process.env.USAGE_REFRESH_OVERLAP_MS ?? 5 * 60_000);
-  return new Date(Math.max(0, latestMs - overlapMs)).toISOString();
-}
-
-function usageFiltersForPolicies(keys: ReturnType<typeof readApiKeys>, policies: Array<{ key_id: string; window_start?: string | null }>) {
-  const policyById = new Map(policies.map(policy => [policy.key_id, policy]));
-  return keys.map(key => ({ apiKey: key.key, sinceIso: policyById.get(key.id)?.window_start }));
-}
 
 function restoreNewDailyWindows(db: Database.Database, keys: ReturnType<typeof readApiKeys>, policies: any[], options: WatcherOptions) {
   if (!options.hardDisable) return [];
@@ -69,7 +41,7 @@ function restoreNewDailyWindows(db: Database.Database, keys: ReturnType<typeof r
 export function runWatcherOnce(db: Database.Database, options: WatcherOptions = {}) {
   const keys = readApiKeys(options.baseDir);
   const policies = resolvedPolicies(db);
-  ingestUsageHistory(db, readUsageHistorySince(usageImportSince(db), options.baseDir));
+  ingestUsageHistory(db, readUsageHistorySince(usageImportSince(db, Number(process.env.USAGE_REFRESH_OVERLAP_MS ?? 5 * 60_000)), options.baseDir));
   const usage = readStoredUsageForKeys(db, usageFiltersForPolicies(keys, policies));
   const restored = restoreNewDailyWindows(db, keys, policies, options);
   const keysAfterRestore = restored.length ? readApiKeys(options.baseDir) : keys;

@@ -11,8 +11,8 @@ import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 import { readApiKeys, readUsageHistorySince } from './parsers/reader.js';
 import { summarizeKeyUsage } from './services/usage.js';
-import { ingestUsageHistory, latestStoredUsageTimestamp, readStoredUsageForKeys, recordSyntheticUsage } from './services/usageStore.js';
-import { startOfVietnamDayUtc, resolveWindow } from './utils/time.js';
+import { ingestUsageHistory, readStoredUsageForKeys, recordSyntheticUsage } from './services/usageStore.js';
+import { startOfVietnamDayUtc } from './utils/time.js';
 import { runWatcherOnce, startWatcher } from './services/watcher.js';
 import { getModelRewriteConfig, rollbackModelRewriteSelection, saveModelRewriteConfig, selectModelRewriteTargets, type RewriteTargetPlan } from './services/modelRewrite.js';
 import { applyRewritePlan, parseModelRewriteRequest } from './services/modelRewriteProxy.js';
@@ -33,6 +33,7 @@ import { buildConfigStatus } from './configStatus.js';
 import { createApiKeyCache } from './services/apiKeyCache.js';
 import { buildTrafficLogMeta } from './services/trafficLog.js';
 import { nineRouterLogMetrics } from './services/nineRouterLogMetrics.js';
+import { resolvedPolicies as readResolvedPolicies, usageFiltersForPolicies, usageImportSince } from './services/policyUsage.js';
 
 export type ServerAppOptions = {
   adminPassword?: string;
@@ -93,33 +94,19 @@ async function requireAuth(req: any, reply: any) { if (!isAuthed(req)) return re
 
 function ensurePolicies() { const keys = readApiKeys(); const defaultStart = startOfVietnamDayUtc(); const insert = db.prepare('INSERT OR IGNORE INTO key_policies (key_id, name, window_start, reset_policy) VALUES (?, ?, ?, ?)'); for (const key of keys) insert.run(key.id, key.name, defaultStart, 'daily'); return keys; }
 const apiKeyCache = createApiKeyCache({ load: ensurePolicies, ttlMs: Number(process.env.API_KEY_CACHE_TTL_MS ?? 5000) });
-function resolvedPolicies() { const events = db.prepare('SELECT key_id, multiplier, effective_at FROM usage_multiplier_events ORDER BY effective_at ASC, id ASC').all() as Array<{ key_id: string; multiplier: number; effective_at: string }>; const byKey = new Map<string, Array<{ multiplier: number; effective_at: string }>>(); for (const e of events) { const arr = byKey.get(e.key_id) ?? []; arr.push({ multiplier: Number(e.multiplier), effective_at: e.effective_at }); byKey.set(e.key_id, arr); } return (db.prepare('SELECT key_id, name, window_start, window_end, reset_policy, token_limit, image_daily_limit, expires_at, action_on_limit, usage_multiplier, usage_multiplier_effective_at FROM key_policies').all() as any[]).map(p => { const w = resolveWindow({ window_start: p.window_start, window_end: p.window_end, reset_policy: p.reset_policy }); const imageDailyUsed = dailyImageUsageForKey(p.key_id); return { ...p, image_daily_used: imageDailyUsed, window_start: w.windowStart, window_end: w.windowEnd, reset_policy: w.resetPolicy, usage_multiplier_events: byKey.get(p.key_id) ?? [] }; }); }
 const usageRefreshMinIntervalMs = Number(process.env.USAGE_REFRESH_MIN_INTERVAL_MS ?? 30_000);
 const usageRefreshOverlapMs = Number(process.env.USAGE_REFRESH_OVERLAP_MS ?? 5 * 60_000);
 const usageSummaryCacheTtlMs = Number(process.env.USAGE_SUMMARY_CACHE_TTL_MS ?? 15_000);
 let lastUsageRefreshAt = 0;
 let usageSummaryCache: { createdAt: number; data: ReturnType<typeof summarizeKeyUsage> } | null = null;
 
-function usageImportSince() {
-  const latest = latestStoredUsageTimestamp(db);
-  if (!latest) return undefined;
-  const latestMs = Date.parse(latest);
-  if (!Number.isFinite(latestMs)) return latest;
-  return new Date(Math.max(0, latestMs - usageRefreshOverlapMs)).toISOString();
-}
-
 function refreshUsageStore(force = false) {
   const now = Date.now();
   if (!force && lastUsageRefreshAt && now - lastUsageRefreshAt < usageRefreshMinIntervalMs) return 0;
-  const rows = readUsageHistorySince(usageImportSince());
+  const rows = readUsageHistorySince(usageImportSince(db, usageRefreshOverlapMs));
   const inserted = ingestUsageHistory(db, rows);
   lastUsageRefreshAt = now;
   return inserted;
-}
-
-function usageFiltersForPolicies(keys: Array<{ id: string; key: string }>, policies: Array<{ key_id: string; window_start?: string | null }>) {
-  const policyById = new Map(policies.map(policy => [policy.key_id, policy]));
-  return keys.map(key => ({ apiKey: key.key, sinceIso: policyById.get(key.id)?.window_start }));
 }
 
 function invalidateUsageSummaryCache() { usageSummaryCache = null; }
@@ -136,7 +123,7 @@ function usageResponse() {
   if (usageSummaryCache && now - usageSummaryCache.createdAt < usageSummaryCacheTtlMs) return usageSummaryCache.data;
   const keys = ensurePolicies();
   refreshUsageStore();
-  const policies = resolvedPolicies();
+  const policies = readResolvedPolicies(db, { imageDailyUsageForKey: dailyImageUsageForKey });
   const usage = readStoredUsageForKeys(db, usageFiltersForPolicies(keys, policies));
   const data = sortUsageSummaries(summarizeKeyUsage(keys, usage, policies));
   usageSummaryCache = { createdAt: Date.now(), data };
@@ -150,7 +137,7 @@ function maybeUnlockQuotaAfterPolicyChange(keyId: string) {
   const keys = ensurePolicies();
   const key = keys.find(k => k.id === keyId);
   if (!key) return;
-  const policies = resolvedPolicies();
+  const policies = readResolvedPolicies(db, { imageDailyUsageForKey: dailyImageUsageForKey });
   const policy = policies.find(p => p.key_id === keyId);
   const usage = readStoredUsageForKeys(db, [{ apiKey: key.key, sinceIso: policy?.window_start }]);
   const summary = summarizeKeyUsage([key], usage, policy ? [policy] : []).at(0);
@@ -257,7 +244,7 @@ app.post('/api/public/key-check', async (req, reply) => {
   const match = findPublicKeyAny(parsed.data.key);
   if (!match) return reply.code(404).send({ error: 'key not found' });
   refreshUsageStore();
-  const policy = resolvedPolicies().find(p => p.key_id === match.id);
+  const policy = readResolvedPolicies(db, { imageDailyUsageForKey: dailyImageUsageForKey }).find(p => p.key_id === match.id);
   const usage = readStoredUsageForKeys(db, [{ apiKey: match.key, sinceIso: policy?.window_start }]);
   const summary = summarizeKeyUsage([match], usage, policy ? [policy] : []).at(0);
   if (!summary) return reply.code(404).send({ error: 'key not found' });
