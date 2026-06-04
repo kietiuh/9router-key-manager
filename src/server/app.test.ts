@@ -31,6 +31,16 @@ async function app() {
   return { instance, dbPath };
 }
 
+async function adminCookie(server: FastifyInstance) {
+  const res = await server.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    payload: { password: 'test-password' },
+  });
+  const cookie = res.headers['set-cookie'];
+  return Array.isArray(cookie) ? cookie[0] : cookie;
+}
+
 describe('server app routes', () => {
   it('serves health without auth', async () => {
     const { instance: server } = await app();
@@ -61,6 +71,35 @@ describe('server app routes', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.headers['set-cookie']).toEqual(expect.stringContaining('admin_session='));
+  });
+
+  it('rejects admin config routes without auth', async () => {
+    const { instance: server } = await app();
+
+    const res = await server.inject({ method: 'GET', url: '/api/config/status' });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({ error: 'unauthorized' });
+  });
+
+  it('returns default client rate limit config for authenticated admins', async () => {
+    const { instance: server } = await app();
+    const cookie = await adminCookie(server);
+
+    const res = await server.inject({ method: 'GET', url: '/api/client-rate-limit/config', headers: { cookie } });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ enabled: true, rpm: 30, concurrency: 5 });
+  });
+
+  it('returns default model rate limit config for authenticated admins', async () => {
+    const { instance: server } = await app();
+    const cookie = await adminCookie(server);
+
+    const res = await server.inject({ method: 'GET', url: '/api/model-rate-limit/config', headers: { cookie } });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ enabled: false, rules: [] });
   });
 
   it('uses the injected manager database path', async () => {

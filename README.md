@@ -195,6 +195,9 @@ When enabled, the watcher can set the target key's `isActive=false` inside 9rout
 ## Current endpoints
 
 - `GET /api/health`
+- `GET /api/auth/status`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
 - `POST /api/public/key-check`
 - `POST /api/public/images/optimize-prompt`
 - `POST /api/public/images/jobs`
@@ -203,7 +206,21 @@ When enabled, the watcher can set the target key's `isActive=false` inside 9rout
 - `POST /api/public/images/history`
 - `POST /api/public/images/download`
 - `POST /api/public/images/generate`
+- `GET /api/config/status`
 - `GET /api/keys/usage`
+- `GET /api/images/usage`
+- `POST /api/images/usage`
+- `GET /api/traffic/summary`
+- `GET /api/model-rewrite/config`
+- `PUT /api/model-rewrite/config`
+- `GET /api/final-fallback/config`
+- `PUT /api/final-fallback/config`
+- `GET /api/model-rate-limit/config`
+- `PUT /api/model-rate-limit/config`
+- `GET /api/client-rate-limit/config`
+- `PUT /api/client-rate-limit/config`
+- `GET /api/image-proxy/config`
+- `PUT /api/image-proxy/config`
 - `PATCH /api/keys/:keyId/policy`
 - `POST /api/keys/:keyId/reset-window`
 - `POST /api/watcher/run`
