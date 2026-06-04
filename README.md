@@ -71,6 +71,8 @@ npm run ops:maintain-key-manager-storage -- --apply
 
 When production routing, service paths, ports, 9router versions, or mitigation settings change, update the matching runbook in the same commit.
 
+Refactor/docs note: docs under `docs/superpowers/specs` and `docs/superpowers/plans` are historical planning artifacts. Verify them against current source and runtime before relying on them for implementation details.
+
 ## Config
 
 Copy `.env.example` to `.env` if you need overrides.
@@ -78,7 +80,7 @@ Copy `.env.example` to `.env` if you need overrides.
 Important variables:
 
 - `ADMIN_PASSWORD`: required admin password; the server refuses to start without it.
-- `NINE_ROUTER_DIR`: path containing 9router `db.json` and `usage.json`; defaults to `~/.9router`.
+- `NINE_ROUTER_DIR`: path containing 9router runtime storage; readers prefer `db/data.sqlite` when present and fall back to `db.json` / `usage.json`; defaults to `~/.9router`.
 - `KEY_MANAGER_DB`: SQLite path for manager metadata; defaults to `~/.local/state/9router-key-manager/manager.sqlite`.
 - `API_KEY_CACHE_TTL_MS`: short-lived cache for API-key lookups on the `/v1/*` hot path; defaults to `5000`.
 - `HARD_DISABLE`: set to `true` only when you want quota breaches with action `disable` to modify 9router `db.json`.
@@ -91,6 +93,9 @@ Important variables:
 - Model RPM limiting is configured from the admin traffic tab and stored in `manager.sqlite`, not env.
 - `TRAFFIC_LOG_LIMITER_SNAPSHOT`: set to `true` only when debugging RPM queue state on successful proxy requests; defaults to compact success logs.
 - `IMAGE_PROXY_API_KEY`: server-side image upstream key for `authMode: server-key`; never expose or commit it.
+- `PUBLIC_IMAGE_DIR`: directory for temporary public image PNG files; defaults to `~/.local/state/9router-key-manager/public-images`.
+- `PUBLIC_IMAGE_TTL_HOURS`: public image file retention window; defaults to `24`.
+- `PUBLIC_IMAGE_QUEUE_GLOBAL`, `PUBLIC_IMAGE_QUEUE_PER_KEY`, `PUBLIC_IMAGE_JOB_TTL_MINUTES`: public image job queue limits and terminal-job retention.
 - `TELEGRAM_BOT_TOKEN`: Telegram token for GoCinema Assistant; never expose or commit it.
 
 ## Public image creator
@@ -102,12 +107,17 @@ A public user-facing image page exists at:
 /image
 ```
 
-Users paste an active GoCinema key, enter a prompt, optionally optimize it, generate an image, preview it, then download the PNG. The page is public, but API calls require a valid active GoCinema key.
+Users paste an active GoCinema key, enter a prompt, optionally optimize it, enqueue an image job, preview it, then download the PNG. The page is public, but API calls require a valid active GoCinema key.
 
 Relevant APIs:
 
 - `POST /api/public/images/optimize-prompt`
-- `POST /api/public/images/generate`
+- `POST /api/public/images/jobs`
+- `POST /api/public/images/jobs/status`
+- `POST /api/public/images/jobs/cancel`
+- `POST /api/public/images/history`
+- `POST /api/public/images/download`
+- `POST /api/public/images/generate` remains a compatibility endpoint.
 - `POST /v1/images/generations` remains the direct OpenAI-compatible image proxy.
 
 Production currently serves this at:
@@ -178,7 +188,7 @@ Each key has policy metadata in SQLite:
 - `expires_at`
 - `action_on_limit`: `alert`, `disable`, or `none`
 
-Current usage is computed by summing `usage.json.history` records matching that API key and inside the window. Daily/monthly windows reset automatically on UTC+7 boundaries; manual reset only applies to `manual` and `custom` policies.
+Current usage is imported from 9router runtime storage into key-manager `usage_events`, preferring 9router `db/data.sqlite` when present and falling back to `usage.json.history`. Summaries then read key-manager `usage_events` for records matching that API key and inside the policy window. Daily/monthly windows reset automatically on UTC+7 boundaries; manual reset only applies to `manual` and `custom` policies.
 
 ### Hard disable
 
@@ -187,10 +197,32 @@ When enabled, the watcher can set the target key's `isActive=false` inside 9rout
 ## Current endpoints
 
 - `GET /api/health`
+- `GET /api/auth/status`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
 - `POST /api/public/key-check`
 - `POST /api/public/images/optimize-prompt`
+- `POST /api/public/images/jobs`
+- `POST /api/public/images/jobs/status`
+- `POST /api/public/images/jobs/cancel`
+- `POST /api/public/images/history`
+- `POST /api/public/images/download`
 - `POST /api/public/images/generate`
+- `GET /api/config/status`
 - `GET /api/keys/usage`
+- `GET /api/images/usage`
+- `POST /api/images/usage`
+- `GET /api/traffic/summary`
+- `GET /api/model-rewrite/config`
+- `PUT /api/model-rewrite/config`
+- `GET /api/final-fallback/config`
+- `PUT /api/final-fallback/config`
+- `GET /api/model-rate-limit/config`
+- `PUT /api/model-rate-limit/config`
+- `GET /api/client-rate-limit/config`
+- `PUT /api/client-rate-limit/config`
+- `GET /api/image-proxy/config`
+- `PUT /api/image-proxy/config`
 - `PATCH /api/keys/:keyId/policy`
 - `POST /api/keys/:keyId/reset-window`
 - `POST /api/watcher/run`

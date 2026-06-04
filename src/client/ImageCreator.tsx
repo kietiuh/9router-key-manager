@@ -1,14 +1,16 @@
 import { useMemo, useState } from 'react';
 import { api } from './api';
 import { bytes as fmtBytes } from './format';
+import type {
+  PublicImageFileResponse as ImageFileResponse,
+  PublicImageGenerateResponse as GenerateResponse,
+  PublicImageHistoryItem as HistoryItem,
+  PublicImageHistoryResponse as HistoryResponse,
+  PublicImageJobView as ImageJobStatus,
+  PublicImageOptimizeResponse as OptimizeResponse,
+} from '../shared/types';
 
-type OptimizeResponse = { prompt: string; source: 'optimized' | 'fallback' };
-type ImageFileResponse = { image: string; mimeType: string; filename: string; bytes: number; expiresAt?: string };
-type GenerateResponse = ImageFileResponse & { revisedPrompt?: string; prompt: string };
-type HistoryItem = { id: number; model: string; size?: string; promptPreview?: string; bytes?: number; estimatedTotalTokens?: number; createdAt: string; expiresAt?: string };
-type HistoryResponse = { images: HistoryItem[] };
 type HistoryPreview = ImageFileResponse & { id: number };
-type ImageJobStatus = { jobId: string; status: 'queued' | 'running' | 'success' | 'error' | 'cancelled'; queuePosition?: number | null; error?: string; result?: GenerateResponse };
 
 const imageKeyStorage = 'gocinema:imageKey';
 const busyOptimize = 'optimize';

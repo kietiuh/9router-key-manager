@@ -1,14 +1,21 @@
 # Public Image Creator
 
+> Refactor/audit note: this document is a working snapshot, not a source of truth to trust blindly. Re-check the current code and runtime after each refactor phase, then update this doc when new facts are found.
+
 Public image creation page for GoCinema users.
 
 - Page: `/images` (alias: `/image`)
 - Public APIs:
   - `POST /api/public/images/optimize-prompt`
+  - `POST /api/public/images/jobs`
+  - `POST /api/public/images/jobs/status`
+  - `POST /api/public/images/jobs/cancel`
+  - `POST /api/public/images/history`
+  - `POST /api/public/images/download`
   - `POST /api/public/images/generate`
 - Existing direct image proxy remains available at `/v1/images/generations` and `/v1/images/edits`.
 
-The goal is to let a user paste a GoCinema key, enter an image prompt, optionally optimize it, generate an image, preview it, then download the PNG. The page is intentionally public but every action must present a valid active GoCinema key.
+The goal is to let a user paste a GoCinema key, enter an image prompt, optionally optimize it, enqueue an image job, preview it, then download the PNG. The page is intentionally public but every action must present a valid active GoCinema key.
 
 ## User flow
 
@@ -22,9 +29,13 @@ The goal is to let a user paste a GoCinema key, enter an image prompt, optionall
    - If optimize fails or returns empty text, server falls back to deterministic local prompt enhancement.
 5. User clicks **Tạo ảnh**.
    - Server validates key + prompt again.
-   - Server calls the configured image proxy upstream.
-   - Response returns base64 image data to the browser.
-6. User previews image and clicks **Download ảnh**.
+   - Server creates a queued image job through `POST /api/public/images/jobs`.
+   - Browser polls `POST /api/public/images/jobs/status` until the job is `success`, `error`, or `cancelled`.
+   - Queued jobs can be cancelled with `POST /api/public/images/jobs/cancel`; running jobs cannot be cancelled.
+   - On success, the response returns base64 image data and storage metadata.
+6. User previews image, refreshes history with `POST /api/public/images/history`, and downloads stored PNGs through `POST /api/public/images/download`.
+
+`POST /api/public/images/generate` remains as a synchronous compatibility endpoint. It creates the same kind of job and waits for completion; if the job is still queued/running after the wait window, it returns `202` with the job status payload instead of dropping the request.
 
 ## Production deployment shape
 
@@ -102,6 +113,11 @@ COOKIE_SECURE=true
 CORS_ORIGINS=https://admin.gocinema.io.vn,https://user.gocinema.io.vn
 KEY_MANAGER_DB=/root/.local/state/9router-key-manager/manager.sqlite
 NINE_ROUTER_DIR=/root/.9router
+PUBLIC_IMAGE_DIR=/root/.local/state/9router-key-manager/public-images
+PUBLIC_IMAGE_TTL_HOURS=24
+PUBLIC_IMAGE_QUEUE_GLOBAL=3
+PUBLIC_IMAGE_QUEUE_PER_KEY=2
+PUBLIC_IMAGE_JOB_TTL_MINUTES=60
 ```
 
 Production env file is outside git:
@@ -120,6 +136,12 @@ Public image APIs call `findPublicKey()` against 9router keys loaded by the mana
 - key is active (`isActive !== false`)
 
 Invalid or inactive keys return `401`/`404` depending on endpoint.
+
+Current source order for key/usage readers is:
+
+- prefer 9router `db/data.sqlite` when present;
+- fall back to 9router `db.json` for keys and `usage.json` for usage history;
+- import usage into key-manager `usage_events` before quota summaries are computed.
 
 ## Prompt handling
 
@@ -161,7 +183,9 @@ If stream parsing returns empty, the API uses the local fallback prompt enhancer
 
 ## Image generation implementation
 
-The generate endpoint calls the configured image upstream using `buildImageProxyUrl(config, '/v1/images/generations')`.
+The primary job endpoint creates an in-memory public image job. The route module owns prompt optimization, job/status/cancel/history/download handlers; the storage helper owns daily quota checks, `image_usage_events` rows, public PNG files, history reads, and expired-file cleanup.
+
+When a job starts running, it calls the configured image upstream using `buildImageProxyUrl(config, '/v1/images/generations')`.
 
 Request body sent upstream:
 
@@ -190,7 +214,7 @@ Response expected from upstream:
 }
 ```
 
-The API returns:
+Successful job status and the compatibility generate endpoint return:
 
 ```json
 {
@@ -198,11 +222,26 @@ The API returns:
   "mimeType": "image/png",
   "filename": "gocinema-image-...png",
   "prompt": "<prompt sent upstream>",
-  "bytes": 123456
+  "bytes": 123456,
+  "expiresAt": "2026-06-05T00:00:00.000Z"
 }
 ```
 
 The browser uses a `data:image/png;base64,...` URL for preview/download.
+
+Job status shape:
+
+```json
+{
+  "jobId": "uuid",
+  "status": "queued",
+  "queuePosition": 1,
+  "createdAt": "2026-06-04T00:00:00.000Z",
+  "updatedAt": "2026-06-04T00:00:00.000Z"
+}
+```
+
+Terminal statuses are `success`, `error`, and `cancelled`. Running jobs reject cancellation with `409` and `{ "error": "image generation already started" }`.
 
 ## Usage logging
 
@@ -216,6 +255,7 @@ Logged fields include:
 - status
 - image count
 - byte size
+- output file and expiry for stored public page images
 - error message when failed
 
 Admin UI image usage stats should include these rows.
@@ -263,7 +303,8 @@ Before deploy:
 
 ```bash
 npm run build
-npx tsc --noEmit
+./node_modules/.bin/tsc --noEmit
+npm run lint
 npm test
 ```
 
@@ -308,6 +349,14 @@ curl -sS -X POST http://127.0.0.1:3000/api/public/images/generate \
   -d '{"key":"sk-...","prompt":"cute robot cat in neon city","size":"1024x1024"}'
 ```
 
+Primary queued flow smoke test:
+
+```bash
+curl -sS -X POST http://127.0.0.1:3000/api/public/images/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"key":"sk-...","prompt":"cute robot cat in neon city","size":"1024x1024"}'
+```
+
 Image generation can take 60-120 seconds depending on upstream.
 
 ## Known edge cases
@@ -315,18 +364,20 @@ Image generation can take 60-120 seconds depending on upstream.
 - Non-stream chat completions through 9router/ShopAPIKey may return `200` with empty content; keep optimize on `stream:true`.
 - Image generation response can be large (~2 MB base64 for 1024x1024). Avoid putting it into logs.
 - The public page route is unauthenticated by design. The API relies on GoCinema key validation; add rate limiting before broad public launch.
-- If 9router storage migrates between `db.json` and SQLite, ensure key validation still reads the same source as runtime/UI.
+- If 9router storage changes again, ensure key validation still reads the same source as runtime/UI and update this snapshot doc.
 
 ## Reviewer notes for UX hardening changes
 
 This update intentionally keeps the production contract stable:
 
-- `/api/public/images/generate` remains synchronous.
-- The response still returns base64 image data in JSON.
+- `/api/public/images/generate` remains available as a compatibility endpoint.
+- The primary page flow uses `/api/public/images/jobs`, `/status`, `/cancel`, `/history`, and `/download`.
+- Successful generation responses still return base64 image data in JSON.
 - `/images` and `/image` remain public routes.
 - Image generation still uses the stored image proxy config.
 - `authMode: "server-key"` still keeps `IMAGE_PROXY_API_KEY` server-side.
 - Generation still appends the production quality suffix, but the suffix is now idempotent so a fallback-optimized prompt is not duplicated during generation.
+- Public image route handlers live in `src/server/routes/publicImages.ts`; public image queue and storage behavior live in `src/server/services/publicImageJobs.ts` and `src/server/services/publicImageStore.ts`.
 
 Review focus:
 
@@ -340,8 +391,7 @@ Suggested review commands:
 
 ```bash
 npm test
-npx tsc --noEmit
+./node_modules/.bin/tsc --noEmit
+npm run lint
 npm run build
 ```
-
-`npm run lint` currently cannot run in this repo because ESLint 10 requires `eslint.config.*` and the repository does not include one yet.

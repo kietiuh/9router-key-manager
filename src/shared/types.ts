@@ -110,6 +110,51 @@ export type ImageUsageSummary = {
   events: ImageUsageEvent[];
 };
 
+export type PublicImageOptimizeResponse = {
+  prompt: string;
+  source: 'optimized' | 'fallback';
+};
+
+export type PublicImageFileResponse = {
+  image: string;
+  mimeType: string;
+  filename: string;
+  bytes: number;
+  expiresAt?: string;
+};
+
+export type PublicImageGenerateResponse = PublicImageFileResponse & {
+  revisedPrompt?: string;
+  prompt: string;
+};
+
+export type PublicImageHistoryItem = {
+  id: number;
+  model: string;
+  size?: string | null;
+  promptPreview?: string | null;
+  bytes?: number | null;
+  estimatedTotalTokens?: number | null;
+  createdAt: string;
+  expiresAt?: string | null;
+};
+
+export type PublicImageHistoryResponse = {
+  images: PublicImageHistoryItem[];
+};
+
+export type PublicImageJobStatus = 'queued' | 'running' | 'success' | 'error' | 'cancelled';
+
+export type PublicImageJobView = {
+  jobId: string;
+  status: PublicImageJobStatus;
+  queuePosition: number | null;
+  createdAt: string;
+  updatedAt: string;
+  error?: string;
+  result?: PublicImageGenerateResponse;
+};
+
 export type ModelRewriteRule = {
   id: number;
   groupId?: number | null;
