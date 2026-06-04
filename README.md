@@ -91,6 +91,9 @@ Important variables:
 - Model RPM limiting is configured from the admin traffic tab and stored in `manager.sqlite`, not env.
 - `TRAFFIC_LOG_LIMITER_SNAPSHOT`: set to `true` only when debugging RPM queue state on successful proxy requests; defaults to compact success logs.
 - `IMAGE_PROXY_API_KEY`: server-side image upstream key for `authMode: server-key`; never expose or commit it.
+- `PUBLIC_IMAGE_DIR`: directory for temporary public image PNG files; defaults to `~/.local/state/9router-key-manager/public-images`.
+- `PUBLIC_IMAGE_TTL_HOURS`: public image file retention window; defaults to `24`.
+- `PUBLIC_IMAGE_QUEUE_GLOBAL`, `PUBLIC_IMAGE_QUEUE_PER_KEY`, `PUBLIC_IMAGE_JOB_TTL_MINUTES`: public image job queue limits and terminal-job retention.
 - `TELEGRAM_BOT_TOKEN`: Telegram token for GoCinema Assistant; never expose or commit it.
 
 ## Public image creator
@@ -102,12 +105,17 @@ A public user-facing image page exists at:
 /image
 ```
 
-Users paste an active GoCinema key, enter a prompt, optionally optimize it, generate an image, preview it, then download the PNG. The page is public, but API calls require a valid active GoCinema key.
+Users paste an active GoCinema key, enter a prompt, optionally optimize it, enqueue an image job, preview it, then download the PNG. The page is public, but API calls require a valid active GoCinema key.
 
 Relevant APIs:
 
 - `POST /api/public/images/optimize-prompt`
-- `POST /api/public/images/generate`
+- `POST /api/public/images/jobs`
+- `POST /api/public/images/jobs/status`
+- `POST /api/public/images/jobs/cancel`
+- `POST /api/public/images/history`
+- `POST /api/public/images/download`
+- `POST /api/public/images/generate` remains a compatibility endpoint.
 - `POST /v1/images/generations` remains the direct OpenAI-compatible image proxy.
 
 Production currently serves this at:
@@ -189,6 +197,11 @@ When enabled, the watcher can set the target key's `isActive=false` inside 9rout
 - `GET /api/health`
 - `POST /api/public/key-check`
 - `POST /api/public/images/optimize-prompt`
+- `POST /api/public/images/jobs`
+- `POST /api/public/images/jobs/status`
+- `POST /api/public/images/jobs/cancel`
+- `POST /api/public/images/history`
+- `POST /api/public/images/download`
 - `POST /api/public/images/generate`
 - `GET /api/keys/usage`
 - `PATCH /api/keys/:keyId/policy`

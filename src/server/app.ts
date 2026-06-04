@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 import { readApiKeys, readUsageHistorySince } from './parsers/reader.js';
 import { summarizeKeyUsage } from './services/usage.js';
-import { ingestUsageHistory, readStoredUsageForKeys, recordSyntheticUsage } from './services/usageStore.js';
+import { ingestUsageHistory, readStoredUsageForKeys } from './services/usageStore.js';
 import { startOfVietnamDayUtc } from './utils/time.js';
 import { runWatcherOnce, startWatcher } from './services/watcher.js';
 import { getModelRewriteConfig, rollbackModelRewriteSelection, saveModelRewriteConfig, selectModelRewriteTargets, type RewriteTargetPlan } from './services/modelRewrite.js';
@@ -24,7 +24,6 @@ import { buildClientRateLimitErrorBody, ClientRateLimitAcquireError, ClientRateL
 import { createClientRateLimitConfigStore } from './services/clientRateLimitConfig.js';
 import { readUpstreamTimeoutConfig, timeoutForModel } from './services/upstreamTimeouts.js';
 import { buildImageProxyUrl, getImageProxyConfig, isImageProxyPath, maybeRewriteImageModel, parseImageUsage, saveImageProxyConfig } from './services/imageProxy.js';
-import { enhanceImagePrompt } from './services/publicImage.js';
 import { imageProxyNeedsServerKey } from '../shared/imageProxy.js';
 import { buildQuotaErrorBody, evaluateQuotaInterceptor, extractBearerToken } from './services/quotaInterceptor.js';
 import { buildKeyExpiredErrorBody, evaluateKeyAccessInterceptor } from './services/keyAccessInterceptor.js';
@@ -34,8 +33,8 @@ import { createApiKeyCache } from './services/apiKeyCache.js';
 import { buildTrafficLogMeta } from './services/trafficLog.js';
 import { nineRouterLogMetrics } from './services/nineRouterLogMetrics.js';
 import { resolvedPolicies as readResolvedPolicies, usageFiltersForPolicies, usageImportSince } from './services/policyUsage.js';
-import { createPublicImageJobQueue, type PublicImageResult } from './services/publicImageJobs.js';
 import { createPublicImageStore } from './services/publicImageStore.js';
+import { registerPublicImageRoutes } from './routes/publicImages.js';
 
 export type ServerAppOptions = {
   adminPassword?: string;
@@ -65,13 +64,9 @@ const publicImageTtlMs = Number(process.env.PUBLIC_IMAGE_TTL_HOURS ?? 24) * 60 *
 const publicImageStore = createPublicImageStore({ db, publicImageDir, publicImageTtlMs });
 const {
   dailyImageUsageForKey,
-  ensureImageDailyQuota,
   imageUsageSummary,
   recordImageUsage,
   recordImageProxyUsage,
-  savePublicImage,
-  imageHistoryForKey,
-  readPublicImageForKey,
 } = publicImageStore;
 const finalFallbackStore = createFinalFallbackStore(db);
 await app.register(cors, { origin: (origin, cb) => cb(null, !origin || allowedOrigins.has(origin)), credentials: true });
@@ -85,12 +80,6 @@ const PolicyPatch = z.object({
 });
 const LoginBody = z.object({ password: z.string() });
 const PublicKeyCheckBody = z.object({ key: z.string().min(8) });
-const PublicImageOptimizeBody = z.object({ key: z.string().min(8), prompt: z.string().min(3).max(6000) });
-const PublicImageGenerateBody = z.object({ key: z.string().min(8), prompt: z.string().min(3).max(6000), size: z.enum(['1024x1024', '1024x1536', '1536x1024']).optional() });
-const PublicImageHistoryBody = z.object({ key: z.string().min(8) });
-const PublicImageDownloadBody = z.object({ key: z.string().min(8), id: z.number().int().positive() });
-const PublicImageJobBody = PublicImageGenerateBody;
-const PublicImageJobStatusBody = z.object({ key: z.string().min(8), jobId: z.string().uuid() });
 const ImageUsageBody = z.object({ keyId: z.string().optional(), apiKey: z.string().optional(), kind: z.string(), model: z.string(), size: z.string().optional(), promptPreview: z.string().optional(), promptHash: z.string().optional(), inputFile: z.string().optional(), outputFile: z.string().optional(), drivePath: z.string().optional(), status: z.string(), error: z.string().optional(), imageCount: z.number().int().positive().optional(), bytes: z.number().int().nonnegative().optional(), estimatedPromptTokens: z.number().int().nonnegative().optional(), estimatedCompletionTokens: z.number().int().nonnegative().optional(), estimatedTotalTokens: z.number().int().nonnegative().optional(), usageEventSignature: z.string().optional(), expiresAt: z.string().optional() });
 const ModelRewriteRuleBody = z.object({ id: z.number().int().positive().optional(), groupId: z.number().int().positive().nullable().optional(), enabled: z.boolean().optional(), fromModel: z.string(), toModel: z.string().nullable().optional(), toModels: z.array(z.string()).optional(), stickyCount: z.number().int().positive().optional(), targetWeights: z.array(z.number().int().positive()).optional() });
 const ModelRewriteGroupBody = z.object({ id: z.number().int().positive().optional(), name: z.string().optional(), enabled: z.boolean().optional(), rules: z.array(ModelRewriteRuleBody).optional() });
@@ -158,16 +147,6 @@ function maybeUnlockQuotaAfterPolicyChange(keyId: string) {
   if (unlock.unlocked) app.log.info({ keyId, enableChanged: unlock.enableResult?.changed ?? false }, 'quota lockout cleared after policy update');
 }
 
-function estimateTokens(text: string) { return Math.max(1, Math.ceil(Buffer.byteLength(text || '', 'utf8') / 4)); }
-function estimateImageTokens(size: string, imageCount = 1) { const base = size === '1024x1536' || size === '1536x1024' ? 30000 : 20000; return base * imageCount; }
-function recordKeyImageTokenUsage(args: { key: string; keyId: string; kind: string; model: string; promptTokens: number; completionTokens: number; timestamp?: string; sourceId: string }) {
-  const timestamp = args.timestamp ?? new Date().toISOString();
-  const total = args.promptTokens + args.completionTokens;
-  const signature = `synthetic-image|${args.kind}|${args.keyId}|${args.model}|${args.sourceId}`;
-  recordSyntheticUsage(db, { signature, apiKey: args.key, model: args.model, timestamp, provider: 'image-proxy', connectionId: args.kind, tokens: { prompt_tokens: args.promptTokens, completion_tokens: args.completionTokens, total_tokens: total } } as any);
-  return { signature, total };
-}
-
 function findPublicKey(key: string) { const clean = key.trim(); return apiKeyCache.getKeys().find(k => k.key === clean && k.isActive !== false); }
 function findPublicKeyAny(key: string) { const clean = key.trim(); return apiKeyCache.getKeys().find(k => k.key === clean); }
 function autoDisabledReason(keyId: string): string | null {
@@ -178,40 +157,6 @@ function lastDisableAuditMessage(keyId: string): string | null {
   const row = db.prepare("SELECT message FROM audit_log WHERE key_id = ? AND action IN ('disable','auto.disable') ORDER BY id DESC LIMIT 1").get(keyId) as { message?: string } | undefined;
   return row?.message ?? null;
 }
-function sanitizeImagePrompt(prompt: string) {
-  // eslint-disable-next-line no-control-regex
-  return prompt.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 6000);
-}
-function guardImagePrompt(prompt: string) {
-  const text = sanitizeImagePrompt(prompt);
-  const lower = text.toLowerCase();
-  const blocked = [/child\s*(sexual|nude|porn|explicit)/i, /loli|shota/i, /underage.*(nude|sex|porn)/i, /realistic\s+gore/i, /blood\s+and\s+guts/i];
-  if (!text) throw new Error('Prompt is empty');
-  if (blocked.some(rx => rx.test(lower))) throw new Error('Prompt is not allowed');
-  return text;
-}
-function fallbackOptimizedPrompt(prompt: string) {
-  const clean = guardImagePrompt(prompt);
-  return enhanceImagePrompt(clean);
-}
-function extractChatContent(json: any) { return String(json?.choices?.[0]?.message?.content ?? json?.output_text ?? '').trim(); }
-function extractChatStreamContent(text: string) {
-  let out = '';
-  for (const line of text.split(/\r?\n/)) {
-    if (!line.startsWith('data: ')) continue;
-    const data = line.slice(6).trim();
-    if (!data || data === '[DONE]') continue;
-    try { out += JSON.parse(data)?.choices?.[0]?.delta?.content ?? ''; } catch { /* ignore bad SSE chunks */ }
-  }
-  return out.trim();
-}
-function extractImageBase64(json: any) {
-  const item = json?.data?.[0];
-  if (typeof item?.b64_json === 'string') return { image: item.b64_json, revisedPrompt: item.revised_prompt ?? item.revisedPrompt };
-  if (typeof item?.url === 'string' && item.url.startsWith('data:image/')) return { image: item.url.split(',').pop() || '', revisedPrompt: item.revised_prompt ?? item.revisedPrompt };
-  return { image: '', revisedPrompt: undefined };
-}
-function publicImageFilename() { return `gocinema-image-${new Date().toISOString().replace(/[:.]/g, '-')}.png`; }
 function maskedUser(req: any) { const auth = String(req.headers?.authorization ?? ''); if (auth) return crypto.createHash('sha256').update(auth).digest('hex').slice(0, 12); return String(req.ip ?? 'unknown'); }
 function clientRateLimitKey(token: string, key?: { id: string }) {
   if (key?.id) return key.id;
@@ -242,128 +187,17 @@ app.post('/api/public/key-check', async (req, reply) => {
   return publicSummary;
 });
 
-app.post('/api/public/images/optimize-prompt', async (req, reply) => {
-  const body = PublicImageOptimizeBody.parse(req.body);
-  const match = findPublicKey(body.key);
-  if (!match) return reply.code(401).send({ error: 'invalid key' });
-  const prompt = guardImagePrompt(body.prompt);
-  const system = 'Rewrite image prompts for a text-to-image model. Return only the improved prompt in English. Keep user intent. Add concise visual details: subject, composition, lighting, style, quality. Avoid unsafe sexual minors, gore, hate, private data, text/watermarks.';
-  try {
-    const upstream = await fetch(`${nineRouterUpstream}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${match.key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'v1/cx/gpt-5.5', messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }], stream: true, max_tokens: 500 }),
-    });
-    const text = await upstream.text();
-    let optimized = extractChatStreamContent(text);
-    if (!optimized) {
-      try { optimized = extractChatContent(JSON.parse(text)); } catch { /* non-json fallback */ }
-    }
-    optimized = sanitizeImagePrompt(optimized);
-    if (upstream.ok && optimized) {
-      const finalPrompt = guardImagePrompt(optimized);
-      const promptTokens = estimateTokens(`${system}\n${prompt}`);
-      const completionTokens = estimateTokens(finalPrompt);
-      const usage = recordKeyImageTokenUsage({ key: match.key, keyId: match.id, kind: 'public-image-optimize', model: 'v1/cx/gpt-5.5', promptTokens, completionTokens, sourceId: crypto.createHash('sha256').update(`${match.id}|${prompt}|${finalPrompt}|${Date.now()}`).digest('hex').slice(0, 16) });
-      recordImageProxyUsage({ keyId: match.id, apiKey: match.key, kind: 'public-image-optimize', model: 'v1/cx/gpt-5.5', promptPreview: prompt.slice(0, 160), promptHash: crypto.createHash('sha256').update(prompt).digest('hex').slice(0, 16), status: 'success', imageCount: 1, estimatedPromptTokens: promptTokens, estimatedCompletionTokens: completionTokens, estimatedTotalTokens: usage.total, usageEventSignature: usage.signature });
-      return { prompt: finalPrompt, source: 'optimized' };
-    }
-  } catch { /* fallback below */ }
-  return { prompt: fallbackOptimizedPrompt(prompt), source: 'fallback' };
-});
-
-
-const imageQueueMaxGlobal = Number(process.env.PUBLIC_IMAGE_QUEUE_GLOBAL ?? 3);
-const imageQueueMaxPerKey = Number(process.env.PUBLIC_IMAGE_QUEUE_PER_KEY ?? 2);
-const imageJobTtlMs = Number(process.env.PUBLIC_IMAGE_JOB_TTL_MINUTES ?? 60) * 60 * 1000;
-async function runPublicImageGeneration(match: any, prompt: string, size: string): Promise<PublicImageResult> {
-  ensureImageDailyQuota(match.id);
-  const imageProxyConfig = getImageProxyConfig(db);
-  if (!imageProxyConfig.enabled) throw new Error('image proxy disabled');
-  const upstreamHeaders: Record<string, string> = { 'content-type': 'application/json', authorization: `Bearer ${match.key}` };
-  if (imageProxyNeedsServerKey(imageProxyConfig)) {
-    const serverKey = process.env.IMAGE_PROXY_API_KEY;
-    if (!serverKey) throw new Error('image service not configured');
-    upstreamHeaders.authorization = `Bearer ${serverKey}`;
-  }
-  const imageModel = imageProxyConfig.modelOverride?.trim() || 'cx/gpt-5.4-image';
-  const payload = { model: imageModel, prompt: fallbackOptimizedPrompt(prompt), size, n: 1 };
-  const started = Date.now();
-  const upstream = await fetch(buildImageProxyUrl(imageProxyConfig, '/v1/images/generations'), { method: 'POST', headers: upstreamHeaders, body: JSON.stringify(payload) });
-  const json = await upstream.json().catch(() => ({}));
-  const { image, revisedPrompt } = extractImageBase64(json);
-  if (!upstream.ok || !image) {
-    recordImageProxyUsage({ keyId: match.id, apiKey: match.key, kind: 'public-page', model: imageModel, size, promptPreview: prompt.slice(0, 160), status: 'error', error: json?.error?.message || `upstream ${upstream.status}`, imageCount: 1 });
-    throw new Error(json?.error?.message || 'image generation failed');
-  }
-  const bytes = Buffer.byteLength(image, 'base64');
-  const stored = savePublicImage(image);
-  const promptTokens = estimateTokens(payload.prompt);
-  const completionTokens = estimateImageTokens(size, 1);
-  const usage = recordKeyImageTokenUsage({ key: match.key, keyId: match.id, kind: 'public-image-generate', model: imageModel, promptTokens, completionTokens, sourceId: crypto.createHash('sha256').update(`${match.id}|${payload.prompt}|${size}|${started}`).digest('hex').slice(0, 16) });
-  recordImageProxyUsage({ keyId: match.id, apiKey: match.key, kind: 'public-page', model: imageModel, size, promptPreview: prompt.slice(0, 160), promptHash: crypto.createHash('sha256').update(prompt).digest('hex').slice(0, 16), outputFile: stored.fileName, status: 'success', imageCount: 1, bytes, estimatedPromptTokens: promptTokens, estimatedCompletionTokens: completionTokens, estimatedTotalTokens: usage.total, usageEventSignature: usage.signature, expiresAt: stored.expiresAt });
-  app.log.info({ keyId: match.id, model: imageModel, size, bytes, estimatedTokens: usage.total, totalMs: Date.now() - started }, 'public image generated');
-  return { image, mimeType: 'image/png', filename: publicImageFilename(), revisedPrompt, prompt: payload.prompt, bytes, expiresAt: stored.expiresAt };
-}
-const publicImageJobs = createPublicImageJobQueue({
-  maxGlobal: imageQueueMaxGlobal,
-  maxPerKey: imageQueueMaxPerKey,
-  ttlMs: imageJobTtlMs,
-  generate: job => runPublicImageGeneration({ id: job.keyId, key: job.key }, job.prompt, job.size),
-});
-
-app.post('/api/public/images/jobs', async (req, reply) => {
-  const body = PublicImageJobBody.parse(req.body);
-  const match = findPublicKey(body.key);
-  if (!match) return reply.code(401).send({ error: 'invalid key' });
-  return publicImageJobs.createJob(match, guardImagePrompt(body.prompt), body.size ?? '1024x1024');
-});
-app.post('/api/public/images/jobs/status', async (req, reply) => {
-  const body = PublicImageJobStatusBody.parse(req.body);
-  const match = findPublicKey(body.key);
-  if (!match) return reply.code(401).send({ error: 'invalid key' });
-  const job = publicImageJobs.getJob(body.jobId, match.id);
-  if (!job) return reply.code(404).send({ error: 'job not found' });
-  return job;
-});
-app.post('/api/public/images/jobs/cancel', async (req, reply) => {
-  const body = PublicImageJobStatusBody.parse(req.body);
-  const match = findPublicKey(body.key);
-  if (!match) return reply.code(401).send({ error: 'invalid key' });
-  try {
-    const job = publicImageJobs.cancelJob(body.jobId, match.id);
-    if (!job) return reply.code(404).send({ error: 'job not found' });
-    return job;
-  } catch {
-    return reply.code(409).send({ error: 'image generation already started' });
-  }
-});
-app.post('/api/public/images/generate', async (req, reply) => {
-  const body = PublicImageGenerateBody.parse(req.body);
-  const match = findPublicKey(body.key);
-  if (!match) return reply.code(401).send({ error: 'invalid key' });
-  const created = publicImageJobs.createJob(match, guardImagePrompt(body.prompt), body.size ?? '1024x1024');
-  try {
-    const job = await publicImageJobs.waitForJob(created.jobId);
-    if (job.status === 'success' && job.result) return job.result;
-    return reply.code(job.status === 'cancelled' ? 409 : 502).send({ error: job.error || job.status });
-  } catch (err: any) { return reply.code(202).send({ ...created, error: err?.message || 'image generation queued' }); }
-});
-
-app.post('/api/public/images/history', async (req, reply) => {
-  const body = PublicImageHistoryBody.parse(req.body);
-  const match = findPublicKey(body.key);
-  if (!match) return reply.code(401).send({ error: 'invalid key' });
-  return imageHistoryForKey(match.id);
-});
-
-app.post('/api/public/images/download', async (req, reply) => {
-  const body = PublicImageDownloadBody.parse(req.body);
-  const match = findPublicKey(body.key);
-  if (!match) return reply.code(401).send({ error: 'invalid key' });
-  const image = readPublicImageForKey(body.id, match.id);
-  if (!image) return reply.code(404).send({ error: 'image not found or expired' });
-  return image;
+await registerPublicImageRoutes(app, {
+  db,
+  findPublicKey,
+  nineRouterUpstream,
+  publicImageStore,
+  queue: {
+    maxGlobal: Number(process.env.PUBLIC_IMAGE_QUEUE_GLOBAL ?? 3),
+    maxPerKey: Number(process.env.PUBLIC_IMAGE_QUEUE_PER_KEY ?? 2),
+    ttlMs: Number(process.env.PUBLIC_IMAGE_JOB_TTL_MINUTES ?? 60) * 60 * 1000,
+  },
+  serverImageProxyKey: () => process.env.IMAGE_PROXY_API_KEY,
 });
 
 app.register(async proxyRoutes => {

@@ -183,3 +183,5 @@ export function createPublicImageStore(options: PublicImageStoreOptions) {
     readPublicImageForKey,
   };
 }
+
+export type PublicImageStore = ReturnType<typeof createPublicImageStore>;
