@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ModelRateLimitConfig, ModelRateLimitRule, TrafficSummary } from '../shared/types';
+import type { ClientRateLimitConfig, ModelRateLimitConfig, ModelRateLimitRule, TrafficSummary } from '../shared/types';
 import { fmt, vnDateTime } from './format';
 
 type RateLimitDraftRule = Omit<ModelRateLimitRule, 'maxQueueWaitMs'> & { maxQueueWaitSeconds: number };
@@ -42,6 +42,43 @@ function buildConfig(enabled: boolean, rules: RateLimitDraftRule[]): ModelRateLi
   };
 }
 
+function buildClientConfig(enabled: boolean, rpm: number, concurrency: number): ClientRateLimitConfig {
+  return {
+    enabled,
+    rpm: Math.max(1, Math.floor(Number(rpm) || 30)),
+    concurrency: Math.max(1, Math.floor(Number(concurrency) || 5)),
+  };
+}
+
+function ClientRateLimitConfigPanel({ config, saving, onSave }: { config: ClientRateLimitConfig | null; saving: boolean; onSave: (cfg: ClientRateLimitConfig) => Promise<void> }) {
+  const [enabled, setEnabled] = useState(true);
+  const [rpm, setRpm] = useState(30);
+  const [concurrency, setConcurrency] = useState(5);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    if (dirty) return;
+    setEnabled(config?.enabled ?? true);
+    setRpm(config?.rpm ?? 30);
+    setConcurrency(config?.concurrency ?? 5);
+  }, [config, dirty]);
+
+  const save = async () => {
+    await onSave(buildClientConfig(enabled, rpm, concurrency));
+    setDirty(false);
+  };
+
+  return <section className="card rateLimitConfig">
+    <div className="panelHeader"><div><h3>Giới hạn theo API key</h3><p>Mỗi API key có RPM và số request chạy song song riêng; vượt giới hạn sẽ nhận 429 kèm retry-after.</p></div><span className={enabled ? 'pill ok' : 'pill inactive'}>{enabled ? 'Đang bật' : 'Đang tắt'}</span></div>
+    <label><input type="checkbox" checked={enabled} onChange={e => { setDirty(true); setEnabled(e.target.checked); }} /> Bật giới hạn theo API key</label>
+    <div className="clientRateLimitFields">
+      <label>RPM / API key<input type="number" min={1} value={rpm} onChange={e => { setDirty(true); setRpm(Math.max(1, Math.floor(Number(e.target.value) || 1))); }} /></label>
+      <label>Request đồng thời / API key<input type="number" min={1} value={concurrency} onChange={e => { setDirty(true); setConcurrency(Math.max(1, Math.floor(Number(e.target.value) || 1))); }} /></label>
+    </div>
+    <div className="actions"><button onClick={save} disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu giới hạn API key'}{dirty ? ' *' : ''}</button></div>
+  </section>;
+}
+
 function RateLimitConfigPanel({ config, saving, onSave }: { config: ModelRateLimitConfig | null; saving: boolean; onSave: (cfg: ModelRateLimitConfig) => Promise<void> }) {
   const [enabled, setEnabled] = useState(false);
   const [rules, setRules] = useState<RateLimitDraftRule[]>([]);
@@ -80,15 +117,16 @@ function RateLimitConfigPanel({ config, saving, onSave }: { config: ModelRateLim
   </section>;
 }
 
-export function TrafficPanel({ summary, error, modelRateLimitConfig, savingModelRateLimit, onSaveModelRateLimit }: { summary: TrafficSummary | null; error?: string; modelRateLimitConfig: ModelRateLimitConfig | null; savingModelRateLimit: boolean; onSaveModelRateLimit: (cfg: ModelRateLimitConfig) => Promise<void> }) {
-  if (error) return <section className="trafficPanel"><RateLimitConfigPanel config={modelRateLimitConfig} saving={savingModelRateLimit} onSave={onSaveModelRateLimit} /><section className="card"><h2>Giám sát request</h2><p>Chưa đọc được dữ liệu giám sát: {error}</p></section></section>;
-  if (!summary) return <section className="trafficPanel"><RateLimitConfigPanel config={modelRateLimitConfig} saving={savingModelRateLimit} onSave={onSaveModelRateLimit} /><section className="card"><h2>Giám sát request</h2><p>Chưa có dữ liệu giám sát trong phiên chạy hiện tại.</p></section></section>;
+export function TrafficPanel({ summary, error, clientRateLimitConfig, modelRateLimitConfig, savingClientRateLimit, savingModelRateLimit, onSaveClientRateLimit, onSaveModelRateLimit }: { summary: TrafficSummary | null; error?: string; clientRateLimitConfig: ClientRateLimitConfig | null; modelRateLimitConfig: ModelRateLimitConfig | null; savingClientRateLimit: boolean; savingModelRateLimit: boolean; onSaveClientRateLimit: (cfg: ClientRateLimitConfig) => Promise<void>; onSaveModelRateLimit: (cfg: ModelRateLimitConfig) => Promise<void> }) {
+  if (error) return <section className="trafficPanel"><ClientRateLimitConfigPanel config={clientRateLimitConfig} saving={savingClientRateLimit} onSave={onSaveClientRateLimit} /><RateLimitConfigPanel config={modelRateLimitConfig} saving={savingModelRateLimit} onSave={onSaveModelRateLimit} /><section className="card"><h2>Giám sát request</h2><p>Chưa đọc được dữ liệu giám sát: {error}</p></section></section>;
+  if (!summary) return <section className="trafficPanel"><ClientRateLimitConfigPanel config={clientRateLimitConfig} saving={savingClientRateLimit} onSave={onSaveClientRateLimit} /><RateLimitConfigPanel config={modelRateLimitConfig} saving={savingModelRateLimit} onSave={onSaveModelRateLimit} /><section className="card"><h2>Giám sát request</h2><p>Chưa có dữ liệu giám sát trong phiên chạy hiện tại.</p></section></section>;
   const latestText = summary.latestEventAt ? vnDateTime(summary.latestEventAt) : 'Chưa có request trong cửa sổ hiện tại';
   const recentBuckets = summary.buckets.slice(-12).reverse();
   const maxBucketRequests = Math.max(1, ...recentBuckets.map(bucket => bucket.requestCount));
   const streamCount = summary.streamCount ?? 0;
 
   return <section className="trafficPanel">
+    <ClientRateLimitConfigPanel config={clientRateLimitConfig} saving={savingClientRateLimit} onSave={onSaveClientRateLimit} />
     <RateLimitConfigPanel config={modelRateLimitConfig} saving={savingModelRateLimit} onSave={onSaveModelRateLimit} />
     <div className="panelHeader"><div><h2>Giám sát 9router</h2><p>Đọc log service 9router trong {summary.windowMinutes} phút gần nhất, cập nhật nền mỗi khoảng {summary.bucketMinutes} phút để không ảnh hưởng request.</p>{summary.error && <p className="formError">Lỗi đọc log gần nhất: {summary.error}</p>}</div><span className="pill">Dữ liệu mới nhất: {latestText}</span></div>
     <div className="trafficStatsGrid">

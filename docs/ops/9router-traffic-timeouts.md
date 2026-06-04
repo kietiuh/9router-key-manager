@@ -1,9 +1,28 @@
 # 9router Traffic RPM And Timeout Policy
 
-This runbook separates two controls on `/v1/*` traffic:
+This runbook separates three controls on `/v1/*` traffic:
 
+- API-key client rate limiting controls how much one API key can send to key-manager.
 - Model RPM limiting controls when key-manager starts requests to 9router.
 - Upstream timeouts control how long an active upstream attempt may run before key-manager aborts it.
+
+## API-Key Client Rate Limiting
+
+Client rate limiting is configured in the admin UI under `Giám sát 9router`.
+
+The default config is enabled:
+
+```json
+{
+  "enabled": true,
+  "rpm": 30,
+  "concurrency": 5
+}
+```
+
+The limiter is keyed by the resolved 9router API key id, not by IP. If a bearer token is present but does not match a known key, key-manager uses a short hash fingerprint of that token so invalid-key spam is still bounded without logging the secret. It runs after key expiry/quota checks and before image direct proxy or chat/text proxy attempts. This keeps admin APIs, public key checks, watcher jobs, and bot delivery outside the limiter while protecting the `/v1/*` hot path.
+
+When a key exceeds RPM or concurrency, key-manager returns `429` with `retry-after`. RPM rejections also include `x-ratelimit-reset`.
 
 ## Model RPM Limiting
 
@@ -66,7 +85,7 @@ systemctl daemon-reload
 systemctl restart 9router-key-manager.service
 ```
 
-RPM rules do not require a restart. Save them from the admin traffic tab.
+API-key client limits and model RPM rules do not require a restart. Save them from the admin traffic tab.
 
 ## Verification
 
@@ -77,15 +96,17 @@ systemctl show 9router-key-manager.service --property=ActiveState,SubState,NRest
 curl -sS http://127.0.0.1:3000/api/health
 ```
 
-Check recent timeout, RPM queue, and proxy logs:
+Check recent timeout, client limiter, RPM queue, and proxy logs:
 
 ```bash
-journalctl -u 9router-key-manager.service --since '10 minutes ago' -g 'upstream_timeout|model rate limited request rejected|traffic proxied request failed' --no-pager -o short-iso
+journalctl -u 9router-key-manager.service --since '10 minutes ago' -g 'upstream_timeout|client rate limited request rejected|model rate limited request rejected|traffic proxied request failed' --no-pager -o short-iso
 ```
 
-Healthy proxied request logs include `rateQueuedMs`, `rateLimitModel`, `rateLimitRpm`, `rateLimited`, and `upstreamTimeoutMs`. `rateQueuedMs > 0` means the request waited for a model RPM slot before going to 9router.
+Healthy proxied request logs include `clientRateLimitRpm`, `clientConcurrencyLimit`, `clientRateRemaining`, `clientActive`, `rateQueuedMs`, `rateLimitModel`, `rateLimitRpm`, `rateLimited`, and `upstreamTimeoutMs`. `rateQueuedMs > 0` means the request waited for a model RPM slot before going to 9router.
 
 ## Rollback
+
+To disable API-key client rate limiting, turn off `Bật giới hạn theo API key` in the admin traffic tab and save.
 
 To disable RPM limiting, turn off `Bật giới hạn RPM` in the admin traffic tab and save.
 
