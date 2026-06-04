@@ -137,6 +137,12 @@ Public image APIs call `findPublicKey()` against 9router keys loaded by the mana
 
 Invalid or inactive keys return `401`/`404` depending on endpoint.
 
+Current source order for key/usage readers is:
+
+- prefer 9router `db/data.sqlite` when present;
+- fall back to 9router `db.json` for keys and `usage.json` for usage history;
+- import usage into key-manager `usage_events` before quota summaries are computed.
+
 ## Prompt handling
 
 Server-side prompt logic exists to keep image generation closer to prior successful generations and to avoid obvious bad requests.
@@ -358,7 +364,7 @@ Image generation can take 60-120 seconds depending on upstream.
 - Non-stream chat completions through 9router/ShopAPIKey may return `200` with empty content; keep optimize on `stream:true`.
 - Image generation response can be large (~2 MB base64 for 1024x1024). Avoid putting it into logs.
 - The public page route is unauthenticated by design. The API relies on GoCinema key validation; add rate limiting before broad public launch.
-- If 9router storage migrates between `db.json` and SQLite, ensure key validation still reads the same source as runtime/UI.
+- If 9router storage changes again, ensure key validation still reads the same source as runtime/UI and update this snapshot doc.
 
 ## Reviewer notes for UX hardening changes
 

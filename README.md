@@ -71,6 +71,8 @@ npm run ops:maintain-key-manager-storage -- --apply
 
 When production routing, service paths, ports, 9router versions, or mitigation settings change, update the matching runbook in the same commit.
 
+Refactor/docs note: docs under `docs/superpowers/specs` and `docs/superpowers/plans` are historical planning artifacts. Verify them against current source and runtime before relying on them for implementation details.
+
 ## Config
 
 Copy `.env.example` to `.env` if you need overrides.
@@ -78,7 +80,7 @@ Copy `.env.example` to `.env` if you need overrides.
 Important variables:
 
 - `ADMIN_PASSWORD`: required admin password; the server refuses to start without it.
-- `NINE_ROUTER_DIR`: path containing 9router `db.json` and `usage.json`; defaults to `~/.9router`.
+- `NINE_ROUTER_DIR`: path containing 9router runtime storage; readers prefer `db/data.sqlite` when present and fall back to `db.json` / `usage.json`; defaults to `~/.9router`.
 - `KEY_MANAGER_DB`: SQLite path for manager metadata; defaults to `~/.local/state/9router-key-manager/manager.sqlite`.
 - `API_KEY_CACHE_TTL_MS`: short-lived cache for API-key lookups on the `/v1/*` hot path; defaults to `5000`.
 - `HARD_DISABLE`: set to `true` only when you want quota breaches with action `disable` to modify 9router `db.json`.
@@ -186,7 +188,7 @@ Each key has policy metadata in SQLite:
 - `expires_at`
 - `action_on_limit`: `alert`, `disable`, or `none`
 
-Current usage is computed by summing `usage.json.history` records matching that API key and inside the window. Daily/monthly windows reset automatically on UTC+7 boundaries; manual reset only applies to `manual` and `custom` policies.
+Current usage is imported from 9router runtime storage into key-manager `usage_events`, preferring 9router `db/data.sqlite` when present and falling back to `usage.json.history`. Summaries then read key-manager `usage_events` for records matching that API key and inside the policy window. Daily/monthly windows reset automatically on UTC+7 boundaries; manual reset only applies to `manual` and `custom` policies.
 
 ### Hard disable
 

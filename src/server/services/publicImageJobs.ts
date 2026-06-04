@@ -1,16 +1,8 @@
 import crypto from 'node:crypto';
+import type { PublicImageGenerateResponse, PublicImageJobStatus, PublicImageJobView } from '../../shared/types.js';
 
-export type PublicImageResult = {
-  image: string;
-  mimeType: string;
-  filename: string;
-  revisedPrompt?: string;
-  prompt: string;
-  bytes: number;
-  expiresAt?: string;
-};
-
-export type PublicImageJobStatus = 'queued' | 'running' | 'success' | 'error' | 'cancelled';
+export type PublicImageResult = PublicImageGenerateResponse;
+export type { PublicImageJobStatus, PublicImageJobView };
 
 export type PublicImageJob = {
   id: string;
@@ -23,16 +15,6 @@ export type PublicImageJob = {
   updatedAt: number;
   result?: PublicImageResult;
   error?: string;
-};
-
-export type PublicImageJobView = {
-  jobId: string;
-  status: PublicImageJobStatus;
-  queuePosition: number | null;
-  createdAt: string;
-  updatedAt: string;
-  error?: string;
-  result?: PublicImageResult;
 };
 
 export type PublicImageJobQueueOptions = {
