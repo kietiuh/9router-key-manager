@@ -176,6 +176,19 @@ function remainingTokens(summary: KeyUsageSummary): number | null {
   return Math.max(0, summary.tokenLimit - summary.total);
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function formatExpiryLines(summary: KeyUsageSummary, timezoneOffsetHours: number): string[] {
+  if (!summary.expiresAt) return ['⏳ Hạn key: Không giới hạn'];
+  const expiryTime = Date.parse(summary.expiresAt);
+  if (!Number.isFinite(expiryTime)) return [`⏳ Hạn key: ${formatLocalDateTime(summary.expiresAt, timezoneOffsetHours)}`];
+  const daysRemaining = Math.ceil((expiryTime - Date.now()) / DAY_MS);
+  return [
+    `⏳ Hạn key: ${formatLocalDateTime(summary.expiresAt, timezoneOffsetHours)}`,
+    `📅 Còn lại: ${daysRemaining > 0 ? `${daysRemaining} ngày` : 'đã hết hạn'}`,
+  ];
+}
+
 function statusGuidance(summary: KeyUsageSummary): string | null {
   const remaining = remainingPercent(summary);
   if (summary.status === 'warning') return remaining == null ? 'Nên theo dõi quota hoặc bật cảnh báo.' : `Còn ${remaining}% quota. Nên bật cảnh báo để nhận thông báo sớm.`;
@@ -292,6 +305,7 @@ export function formatQuotaMessage(args: {
   if (guidance) lines.push(guidance);
   lines.push(usageLine);
   if (remaining != null) lines.push(`Còn lại: ${formatNumber(remaining)} token`);
+  lines.push(...formatExpiryLines(summary, args.timezoneOffsetHours));
   lines.push(
     '',
     imageLine,

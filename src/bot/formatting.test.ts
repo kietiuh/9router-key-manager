@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { KeyUsageSummary } from '../shared/types.js';
 import { BOT_ACTIONS } from './actions.js';
 import {
   formatHelpText,
@@ -13,6 +14,43 @@ import {
   quotaMarkup,
   settingsMarkup,
 } from './formatting.js';
+
+function quotaSummary(overrides: Partial<KeyUsageSummary> = {}): KeyUsageSummary {
+  return {
+    keyId: 'k1',
+    name: 'Client A',
+    keyMasked: 'sk-a...test',
+    isActive: true,
+    status: 'ok',
+    statusReason: 'Healthy',
+    windowStart: '2026-05-23T17:00:00.000Z',
+    windowEnd: '2026-05-24T17:00:00.000Z',
+    resetPolicy: 'daily',
+    expiresAt: null,
+    tokenLimit: 10000,
+    imageDailyLimit: 20,
+    imageDailyUsed: 3,
+    actionOnLimit: 'disable',
+    usageMultiplier: 1,
+    actualPrompt: 4000,
+    actualCompletion: 4500,
+    actualTotal: 8500,
+    dedupedRequests: 11,
+    duplicateRequests: 0,
+    duplicateTokens: 0,
+    req: 11,
+    prompt: 4000,
+    completion: 4500,
+    total: 8500,
+    cost: 0,
+    percentOfLimit: 85,
+    firstUsageAt: '2026-05-24T01:00:00.000Z',
+    lastUsageAt: '2026-05-24T02:00:00.000Z',
+    models: {},
+    modelUsage: [],
+    ...overrides,
+  };
+}
 
 describe('bot formatting', () => {
   it('builds an extensible client menu', () => {
@@ -89,6 +127,54 @@ describe('bot formatting', () => {
     expect(message).toContain('Lần dùng gần nhất: 09:00 24/05/2026');
     expect(message).not.toContain('Token usage above 80%');
     expect(message).not.toContain('Trạng thái: warning');
+  });
+
+  it('formats key expiry and remaining days on the quota dashboard', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-09T00:00:00.000Z'));
+    try {
+      const message = formatQuotaMessage({
+        summary: quotaSummary({ expiresAt: '2026-06-30T00:00:00.000Z' }),
+        alertsEnabled: true,
+        alertThresholdPercent: 20,
+        timezoneOffsetHours: 7,
+      });
+
+      expect(message).toContain('⏳ Hạn key: 07:00 30/06/2026');
+      expect(message).toContain('📅 Còn lại: 21 ngày');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('formats unlimited key expiry on the quota dashboard', () => {
+    const message = formatQuotaMessage({
+      summary: quotaSummary({ expiresAt: null }),
+      alertsEnabled: true,
+      alertThresholdPercent: 20,
+      timezoneOffsetHours: 7,
+    });
+
+    expect(message).toContain('⏳ Hạn key: Không giới hạn');
+    expect(message).not.toContain('📅 Còn lại:');
+  });
+
+  it('formats expired key expiry on the quota dashboard', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-09T00:00:00.000Z'));
+    try {
+      const message = formatQuotaMessage({
+        summary: quotaSummary({ expiresAt: '2026-06-01T00:00:00.000Z' }),
+        alertsEnabled: true,
+        alertThresholdPercent: 20,
+        timezoneOffsetHours: 7,
+      });
+
+      expect(message).toContain('⏳ Hạn key: 07:00 01/06/2026');
+      expect(message).toContain('📅 Còn lại: đã hết hạn');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps healthy quota text friendly and hides raw technical reasons', () => {
