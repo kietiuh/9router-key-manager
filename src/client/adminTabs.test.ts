@@ -41,10 +41,9 @@ describe('admin tab helpers', () => {
   });
 
   it('counts dashboard tabs from current data', () => {
-    const counts = getAdminTabCounts([key('danger'), key('ok'), key('inactive', false)], { todayImages: 2, totalImages: 4, success: 1, errors: 1, bytes: 20, events: [] });
+    const counts = getAdminTabCounts([key('danger'), key('ok'), key('inactive', false)], null);
     expect(counts.overview).toBe(1);
     expect(counts.keys).toBe(3);
-    expect(counts.images).toBe(2);
     expect(counts.traffic).toBeUndefined();
     expect(counts.routing).toBeUndefined();
   });
