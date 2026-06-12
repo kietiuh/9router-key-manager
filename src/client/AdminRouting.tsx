@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { FinalFallbackConfig, ImageProxyConfig, ModelRewriteConfig } from '../shared/types';
+import type { FinalFallbackConfig, ModelRewriteConfig } from '../shared/types';
 import { finalFallbackNeedsModel } from '../shared/finalFallback';
-import { IMAGE_PROXY_ALLOWED_BASE_URLS } from '../shared/imageProxy';
 
 type RewriteDraftRule = { id?: number; groupId?: number | null; enabled: boolean; fromModel: string; toModel: string; toModels: string[]; stickyCount: number; targetWeights: number[] };
 export type RewriteDraftGroup = { id?: number; name: string; enabled: boolean; rules: RewriteDraftRule[] };
@@ -176,18 +175,4 @@ export function FinalFallbackPanel({ config, onSave, saving }: { config: FinalFa
     setDirty(false);
   };
   return <section className="attention fallbackPanel"><h2>Cấu hình ngoài cùng — Final fallback</h2><div className="fallbackFields"><label><input type="checkbox" checked={enabled} onChange={e => { setDirty(true); setEnabled(e.target.checked); }} /> Enable final fallback</label><div className="fallbackModels"><span>Fallback models</span>{models.map((model, idx) => <div className="fallbackModelRow" key={idx}><input value={model} onChange={e => patchModel(idx, e.target.value)} placeholder={idx === 0 ? 'stable/a' : 'stable/b'} /><button type="button" onClick={() => moveModel(idx, -1)} disabled={idx === 0}>Up</button><button type="button" onClick={() => moveModel(idx, 1)} disabled={idx === models.length - 1}>Down</button><button type="button" onClick={() => removeModel(idx)}>Remove</button></div>)}<button type="button" onClick={addModel}>Add model</button></div></div>{missingModel && <p className="formError">At least one fallback model is required when enabled.</p>}<div className="actions"><button onClick={save} disabled={saving || missingModel}>{saving ? 'Saving...' : 'Save final fallback'}{dirty ? ' *' : ''}</button></div></section>;
-}
-
-export function ImageProxyPanel({ config, onSave, saving }: { config: ImageProxyConfig | null; onSave: (cfg: ImageProxyConfig) => Promise<void>; saving: boolean }) {
-  const [enabled, setEnabled] = useState(false);
-  const [upstreamBaseUrl, setUpstreamBaseUrl] = useState('https://shopapikey.com/v1');
-  const [authMode, setAuthMode] = useState<ImageProxyConfig['authMode']>('pass-through');
-  const [modelOverride, setModelOverride] = useState('');
-  const [dirty, setDirty] = useState(false);
-  useEffect(() => { if (dirty) return; setEnabled(Boolean(config?.enabled)); setUpstreamBaseUrl(config?.upstreamBaseUrl ?? 'https://shopapikey.com/v1'); setAuthMode(config?.authMode ?? 'pass-through'); setModelOverride(config?.modelOverride ?? ''); }, [config, dirty]);
-  const save = async () => {
-    await onSave({ enabled, upstreamBaseUrl, authMode, modelOverride: modelOverride.trim() });
-    setDirty(false);
-  };
-  return <section className="attention fallbackPanel"><h2>Image proxy routing</h2><p>Route /v1/images/generations and /v1/images/edits directly to selected image upstream. Chat/text requests stay on 9router.</p><div className="fallbackFields"><label><input type="checkbox" checked={enabled} onChange={e => { setDirty(true); setEnabled(e.target.checked); }} /> Enable image direct proxy</label><label>Upstream<select value={upstreamBaseUrl} onChange={e => { setDirty(true); setUpstreamBaseUrl(e.target.value); }}>{IMAGE_PROXY_ALLOWED_BASE_URLS.map(url => <option key={url} value={url}>{url}</option>)}</select></label><label>Auth mode<select value={authMode} onChange={e => { setDirty(true); setAuthMode(e.target.value as ImageProxyConfig['authMode']); }}><option value="pass-through">Pass through client Authorization</option><option value="server-key">Server key override (IMAGE_PROXY_API_KEY)</option></select></label><label>Model override (optional)<input value={modelOverride} onChange={e => { setDirty(true); setModelOverride(e.target.value); }} placeholder="cx/gpt-5.4-image" /></label></div><div className="actions"><button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save image proxy'}{dirty ? ' *' : ''}</button></div></section>;
 }

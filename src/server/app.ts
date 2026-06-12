@@ -3,7 +3,6 @@ import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import cookie from '@fastify/cookie';
 import path from 'node:path';
-import os from 'node:os';
 import { z } from 'zod';
 import { openDb } from './db/index.js';
 import fs from 'node:fs';
@@ -23,8 +22,6 @@ import { maybeUnlockQuotaLockout } from './services/quotaUnlock.js';
 import { createApiKeyCache } from './services/apiKeyCache.js';
 import { nineRouterLogMetrics } from './services/nineRouterLogMetrics.js';
 import { resolvedPolicies as readResolvedPolicies, usageFiltersForPolicies, usageImportSince } from './services/policyUsage.js';
-import { createPublicImageStore } from './services/publicImageStore.js';
-import { registerPublicImageRoutes } from './routes/publicImages.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerProxyRoutes } from './routes/proxy.js';
 
@@ -57,15 +54,6 @@ const modelRateLimiter = new ModelRateLimiter(modelRateLimitStore.get());
 const clientRateLimitStore = createClientRateLimitConfigStore(db);
 const clientRateLimiter = new ClientRateLimiter(clientRateLimitStore.get());
 const includeLimiterInSuccessLogs = process.env.TRAFFIC_LOG_LIMITER_SNAPSHOT === 'true';
-const publicImageDir = process.env.PUBLIC_IMAGE_DIR ?? path.join(os.homedir(), '.local/state/9router-key-manager/public-images');
-const publicImageTtlMs = Number(process.env.PUBLIC_IMAGE_TTL_HOURS ?? 24) * 60 * 60 * 1000;
-const publicImageStore = createPublicImageStore({ db, publicImageDir, publicImageTtlMs });
-const {
-  dailyImageUsageForKey,
-  imageUsageSummary,
-  recordImageUsage,
-  recordImageProxyUsage,
-} = publicImageStore;
 const finalFallbackStore = createFinalFallbackStore(db);
 await app.register(cors, { origin: (origin, cb) => cb(null, !origin || allowedOrigins.has(origin)), credentials: true });
 await app.register(cookie, { secret: sessionSecret });
@@ -110,7 +98,7 @@ function usageResponse() {
   if (usageSummaryCache && now - usageSummaryCache.createdAt < usageSummaryCacheTtlMs) return usageSummaryCache.data;
   const keys = ensurePolicies();
   refreshUsageStore();
-  const policies = readResolvedPolicies(db, { imageDailyUsageForKey: dailyImageUsageForKey });
+  const policies = readResolvedPolicies(db, { imageDailyUsageForKey: () => 0 });
   const usage = readStoredUsageForKeys(db, usageFiltersForPolicies(keys, policies));
   const data = sortUsageSummaries(summarizeKeyUsage(keys, usage, policies));
   usageSummaryCache = { createdAt: Date.now(), data };
@@ -123,7 +111,7 @@ function maybeUnlockQuotaAfterPolicyChange(keyId: string) {
   const keys = ensurePolicies();
   const key = keys.find(k => k.id === keyId);
   if (!key) return;
-  const policies = readResolvedPolicies(db, { imageDailyUsageForKey: dailyImageUsageForKey });
+  const policies = readResolvedPolicies(db, { imageDailyUsageForKey: () => 0 });
   const policy = policies.find(p => p.key_id === keyId);
   const usage = readStoredUsageForKeys(db, [{ apiKey: key.key, sinceIso: policy?.window_start }]);
   const summary = summarizeKeyUsage([key], usage, policy ? [policy] : []).at(0);
@@ -132,7 +120,6 @@ function maybeUnlockQuotaAfterPolicyChange(keyId: string) {
   if (unlock.unlocked) app.log.info({ keyId, enableChanged: unlock.enableResult?.changed ?? false }, 'quota lockout cleared after policy update');
 }
 
-function findPublicKey(key: string) { const clean = key.trim(); return apiKeyCache.getKeys().find(k => k.key === clean && k.isActive !== false); }
 function findPublicKeyAny(key: string) { const clean = key.trim(); return apiKeyCache.getKeys().find(k => k.key === clean); }
 function autoDisabledReason(keyId: string): string | null {
   const row = db.prepare('SELECT reason FROM auto_disabled_keys WHERE key_id = ? ORDER BY disabled_for_window_start DESC LIMIT 1').get(keyId) as { reason?: string } | undefined;
@@ -153,7 +140,7 @@ app.post('/api/public/key-check', async (req, reply) => {
   const match = findPublicKeyAny(parsed.data.key);
   if (!match) return reply.code(404).send({ error: 'key not found' });
   refreshUsageStore();
-  const policy = readResolvedPolicies(db, { imageDailyUsageForKey: dailyImageUsageForKey }).find(p => p.key_id === match.id);
+  const policy = readResolvedPolicies(db, { imageDailyUsageForKey: () => 0 }).find(p => p.key_id === match.id);
   const usage = readStoredUsageForKeys(db, [{ apiKey: match.key, sinceIso: policy?.window_start }]);
   const summary = summarizeKeyUsage([match], usage, policy ? [policy] : []).at(0);
   if (!summary) return reply.code(404).send({ error: 'key not found' });
@@ -165,20 +152,6 @@ app.post('/api/public/key-check', async (req, reply) => {
   return publicSummary;
 });
 
-await registerPublicImageRoutes(app, {
-  db,
-  findPublicKey,
-  nineRouterUpstream,
-  publicImageStore,
-  fetch: fetchImpl,
-  queue: {
-    maxGlobal: Number(process.env.PUBLIC_IMAGE_QUEUE_GLOBAL ?? 3),
-    maxPerKey: Number(process.env.PUBLIC_IMAGE_QUEUE_PER_KEY ?? 2),
-    ttlMs: Number(process.env.PUBLIC_IMAGE_JOB_TTL_MINUTES ?? 60) * 60 * 1000,
-  },
-  serverImageProxyKey: () => process.env.IMAGE_PROXY_API_KEY,
-});
-
 await registerProxyRoutes(app, {
   db,
   nineRouterUpstream,
@@ -188,8 +161,6 @@ await registerProxyRoutes(app, {
   clientRateLimiter,
   lookupKey: token => apiKeyCache.lookup(token),
   includeLimiterInSuccessLogs,
-  recordImageProxyUsage,
-  serverImageProxyKey: () => process.env.IMAGE_PROXY_API_KEY,
   fetchImpl,
 });
 
@@ -197,8 +168,6 @@ await registerAdminRoutes(app, {
   db,
   requireAuth,
   usageResponse,
-  imageUsageSummary,
-  recordImageUsage,
   finalFallbackStore,
   modelRateLimitStore,
   modelRateLimiter,
@@ -214,6 +183,10 @@ await registerAdminRoutes(app, {
 if (!options.disableBackgroundJobs && process.env.WATCHER_ENABLED !== 'false') startWatcher(db, Number(process.env.WATCH_INTERVAL_MS ?? 60_000), { hardDisable: process.env.HARD_DISABLE === 'true' });
 if (!options.disableBackgroundJobs) nineRouterLogMetrics.start();
 
-if (fs.existsSync(webRoot)) app.setNotFoundHandler(async (req, reply) => { if (req.raw.url?.startsWith('/api/')) return reply.code(404).send({ error: 'not found' }); return reply.sendFile('index.html'); });
+if (fs.existsSync(webRoot)) app.setNotFoundHandler(async (req, reply) => {
+  const pathname = (req.raw.url ?? '').split('?')[0] ?? '';
+  if (pathname === '/images' || pathname === '/image' || pathname.startsWith('/api/')) return reply.code(404).send({ error: 'not found' });
+  return reply.sendFile('index.html');
+});
 return app;
 }

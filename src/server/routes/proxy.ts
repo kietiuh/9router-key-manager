@@ -2,9 +2,7 @@ import type Database from 'better-sqlite3';
 import type { FastifyInstance } from 'fastify';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
-import { imageProxyNeedsServerKey } from '../../shared/imageProxy.js';
 import type { FinalFallbackConfig } from '../services/finalFallback.js';
-import { buildImageProxyUrl, getImageProxyConfig, isImageProxyPath, maybeRewriteImageModel, parseImageUsage } from '../services/imageProxy.js';
 import { applyRewritePlan, parseModelRewriteRequest } from '../services/modelRewriteProxy.js';
 import { rollbackModelRewriteSelection, selectModelRewriteTargets, type RewriteTargetPlan } from '../services/modelRewrite.js';
 import { fetchUpstreamWithFailover, ProxyFailoverError, TrafficAcquireError } from '../services/proxyFailover.js';
@@ -16,7 +14,6 @@ import type { ModelRateLimiter, ModelRateLimitLease } from '../services/modelRat
 import { buildTrafficLogMeta } from '../services/trafficLog.js';
 import { timeoutForModel, type UpstreamTimeoutConfig } from '../services/upstreamTimeouts.js';
 import type { ApiKeyLookupResult } from '../services/apiKeyCache.js';
-import type { ImageUsageInput } from '../services/publicImageStore.js';
 
 export type ProxyRouteOptions = {
   db: Database.Database;
@@ -29,8 +26,6 @@ export type ProxyRouteOptions = {
   clientRateLimiter: ClientRateLimiter;
   lookupKey: (token: string) => ApiKeyLookupResult | undefined;
   includeLimiterInSuccessLogs: boolean;
-  recordImageProxyUsage: (body: ImageUsageInput) => unknown;
-  serverImageProxyKey: () => string | undefined;
   fetchImpl: typeof fetch;
 };
 
@@ -55,8 +50,6 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
     clientRateLimiter,
     lookupKey,
     includeLimiterInSuccessLogs,
-    recordImageProxyUsage,
-    serverImageProxyKey,
     fetchImpl,
   } = options;
 
@@ -120,43 +113,6 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
             return reply.code(err.statusCode).send(buildClientRateLimitErrorBody(err));
           }
           throw err;
-        }
-      }
-
-      const imageProxyConfig = getImageProxyConfig(db);
-      if (imageProxyConfig.enabled && isImageProxyPath(req.raw.url?.split('?')[0] ?? '') && method !== 'GET' && method !== 'HEAD') {
-        const totalStarted = Date.now();
-        try {
-          if (imageProxyNeedsServerKey(imageProxyConfig)) {
-            const serverKey = serverImageProxyKey();
-            if (!serverKey) return reply.code(503).send({ error: { message: 'Image proxy server key is not configured', type: 'image_proxy_config' } });
-            headers.set('authorization', `Bearer ${serverKey}`);
-          }
-          const body = maybeRewriteImageModel(rawBody, req.headers['content-type'], imageProxyConfig.modelOverride);
-          if (body) headers.set('content-length', String(body.length));
-          else headers.delete('content-length');
-          const upstreamStarted = Date.now();
-          const upstream = await fetchImpl(buildImageProxyUrl(imageProxyConfig, req.raw.url ?? '/v1/images/generations'), { method, headers, body: body as any, duplex: 'half' } as RequestInit & { duplex: 'half' });
-          const upstreamMs = Date.now() - upstreamStarted;
-          const responseBuffer = Buffer.from(await upstream.arrayBuffer());
-          const usage = parseImageUsage(body, responseBuffer.length, upstream.status);
-          recordImageProxyUsage(usage);
-          req.log.info({ upstreamBaseUrl: imageProxyConfig.upstreamBaseUrl, upstreamStatus: upstream.status, upstreamMs, totalMs: Date.now() - totalStarted, bodyBytes: body?.length ?? 0, responseBytes: responseBuffer.length }, 'image request proxied direct');
-          reply.header('x-image-proxy', 'direct');
-          if (clientLease?.clientRateRemaining != null) reply.header('x-ratelimit-remaining', String(clientLease.clientRateRemaining));
-          if (clientLease?.clientRateResetAt) reply.header('x-ratelimit-reset', clientLease.clientRateResetAt);
-          reply.header('x-upstream-time-ms', String(upstreamMs));
-          reply.code(upstream.status);
-          upstream.headers.forEach((value, key) => {
-            if (!['connection', 'content-encoding', 'transfer-encoding', 'content-length'].includes(key.toLowerCase())) reply.header(key, value);
-          });
-          return reply.send(responseBuffer);
-        } catch (err: any) {
-          req.log.error({ error: err?.message, totalMs: Date.now() - totalStarted }, 'image direct proxy failed');
-          recordImageProxyUsage({ kind: 'proxy', model: imageProxyConfig.modelOverride || 'unknown', status: 'error', error: err?.message, imageCount: 1 });
-          return reply.code(502).send({ error: { message: 'Image upstream proxy error', type: 'image_proxy_error' } });
-        } finally {
-          releaseClientLease();
         }
       }
 

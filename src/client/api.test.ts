@@ -3,7 +3,7 @@ import { messageFromErrorText } from './api';
 
 describe('api error parsing', () => {
   it('extracts flat API errors', () => {
-    expect(messageFromErrorText('{"error":"image proxy disabled"}')).toBe('image proxy disabled');
+    expect(messageFromErrorText('{"error":"feature disabled"}')).toBe('feature disabled');
   });
 
   it('extracts nested OpenAI-style API errors', () => {

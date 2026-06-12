@@ -84,77 +84,6 @@ export type ConfigStatus = {
 };
 
 
-export type ImageUsageEvent = {
-  id: number;
-  kind: 'generation' | 'edit' | string;
-  model: string;
-  size?: string | null;
-  prompt_preview?: string | null;
-  prompt_hash?: string | null;
-  input_file?: string | null;
-  output_file?: string | null;
-  drive_path?: string | null;
-  status: 'success' | 'error' | string;
-  error?: string | null;
-  image_count: number;
-  bytes?: number | null;
-  created_at: string;
-};
-
-export type ImageUsageSummary = {
-  todayImages: number;
-  totalImages: number;
-  success: number;
-  errors: number;
-  bytes: number;
-  events: ImageUsageEvent[];
-};
-
-export type PublicImageOptimizeResponse = {
-  prompt: string;
-  source: 'optimized' | 'fallback';
-};
-
-export type PublicImageFileResponse = {
-  image: string;
-  mimeType: string;
-  filename: string;
-  bytes: number;
-  expiresAt?: string;
-};
-
-export type PublicImageGenerateResponse = PublicImageFileResponse & {
-  revisedPrompt?: string;
-  prompt: string;
-};
-
-export type PublicImageHistoryItem = {
-  id: number;
-  model: string;
-  size?: string | null;
-  promptPreview?: string | null;
-  bytes?: number | null;
-  estimatedTotalTokens?: number | null;
-  createdAt: string;
-  expiresAt?: string | null;
-};
-
-export type PublicImageHistoryResponse = {
-  images: PublicImageHistoryItem[];
-};
-
-export type PublicImageJobStatus = 'queued' | 'running' | 'success' | 'error' | 'cancelled';
-
-export type PublicImageJobView = {
-  jobId: string;
-  status: PublicImageJobStatus;
-  queuePosition: number | null;
-  createdAt: string;
-  updatedAt: string;
-  error?: string;
-  result?: PublicImageGenerateResponse;
-};
-
 export type ModelRewriteRule = {
   id: number;
   groupId?: number | null;
@@ -189,13 +118,6 @@ export type FinalFallbackConfig = {
   enabled: boolean;
   model: string;
   models?: string[];
-};
-
-export type ImageProxyConfig = {
-  enabled: boolean;
-  upstreamBaseUrl: string;
-  authMode: 'pass-through' | 'server-key';
-  modelOverride?: string;
 };
 
 export type ModelRateLimitRule = {

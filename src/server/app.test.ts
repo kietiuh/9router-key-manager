@@ -191,34 +191,31 @@ describe('server app routes', () => {
     expect(second.json().error.code).toBe('client_rpm_exceeded');
   });
 
-  it('uses the direct image proxy path when image proxy is enabled', async () => {
-    let upstreamUrl = '';
-    const key = { id: 'key-image', name: 'Image', key: 'sk-image', isActive: true };
-    const { instance: server } = await app({
-      readApiKeys: () => [key],
-      fetchImpl: async (input) => {
-        upstreamUrl = String(input);
-        return new Response(Buffer.from('png'), { status: 201, headers: { 'content-type': 'image/png' } });
-      },
-    });
+  it('returns 404 for removed image feature endpoints', async () => {
+    const { instance: server } = await app();
     const cookie = await adminCookie(server);
-    await server.inject({
-      method: 'PUT',
-      url: '/api/image-proxy/config',
-      headers: { cookie },
-      payload: { enabled: true, upstreamBaseUrl: 'https://shopapikey.com/v1', authMode: 'pass-through', modelOverride: 'cx/test-image' },
-    });
 
-    const res = await server.inject({
-      method: 'POST',
-      url: '/v1/images/generations',
-      headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
-      payload: { model: 'ignored', prompt: 'cat', n: 1, size: '1024x1024' },
-    });
+    const [adminImageUsage, adminImageProxy, publicImageApi] = await Promise.all([
+      server.inject({ method: 'GET', url: '/api/images/usage', headers: { cookie } }),
+      server.inject({ method: 'GET', url: '/api/image-proxy/config', headers: { cookie } }),
+      server.inject({ method: 'POST', url: '/api/public/images/jobs', payload: { key: 'sk-test', prompt: 'cat' } }),
+    ]);
 
-    expect(res.statusCode).toBe(201);
-    expect(res.headers['x-image-proxy']).toBe('direct');
-    expect(res.body).toBe('png');
-    expect(upstreamUrl).toBe('https://shopapikey.com/v1/images/generations');
+    expect(adminImageUsage.statusCode).toBe(404);
+    expect(adminImageProxy.statusCode).toBe(404);
+    expect(publicImageApi.statusCode).toBe(404);
   });
+
+  it('returns 404 for removed image pages', async () => {
+    const { instance: server } = await app();
+
+    const [imagesPage, imageAlias] = await Promise.all([
+      server.inject({ method: 'GET', url: '/images' }),
+      server.inject({ method: 'GET', url: '/image' }),
+    ]);
+
+    expect(imagesPage.statusCode).toBe(404);
+    expect(imageAlias.statusCode).toBe(404);
+  });
+
 });
