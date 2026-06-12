@@ -157,6 +157,30 @@ describe('fetchUpstreamWithFailover', () => {
     })).rejects.toBeInstanceOf(TrafficAcquireError);
   });
 
+  it('uses the final fallback model after rewrite targets fail with 402', async () => {
+    const calls: string[] = [];
+    const limit = limiter();
+    const result = await fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/chat/completions',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1']),
+      finalFallback: { enabled: true, model: 'stable' },
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
+      fetchImpl: async (_url, init) => {
+        calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+        return new Response('{}', { status: calls.length === 1 ? 402 : 200 });
+      },
+    });
+
+    expect(calls).toEqual(['v1', 'stable']);
+    expect(result.model).toBe('stable');
+    result.lease.release();
+  });
+
   it('uses the final fallback model after rewrite targets fail with retryable statuses', async () => {
     const calls: string[] = [];
     const limit = limiter();
@@ -226,6 +250,31 @@ describe('fetchUpstreamWithFailover', () => {
         calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
         if (calls.length === 1) return new Response('{}', { status: 500 });
         return new Response('{}', { status: calls.length === 2 ? 400 : 200 });
+      },
+    });
+
+    expect(calls).toEqual(['v1', 'stable-a', 'stable-b']);
+    expect(result.model).toBe('stable-b');
+    result.lease.release();
+  });
+
+  it('retries the next final fallback model for final fallback 402 responses', async () => {
+    const calls: string[] = [];
+    const limit = limiter();
+    const result = await fetchUpstreamWithFailover({
+      upstreamUrl: 'http://upstream/v1/chat/completions',
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      decision: rewriteDecision(['v1']),
+      finalFallback: { enabled: true, model: 'stable-a', models: ['stable-a', 'stable-b'] },
+      userId: 'user-1',
+      largeContextThresholdTokens: 1000,
+      modelRateLimiter: limit.modelRateLimiter,
+      upstreamTimeoutFor: limit.upstreamTimeoutFor,
+      fetchImpl: async (_url, init) => {
+        calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+        if (calls.length === 1) return new Response('{}', { status: 500 });
+        return new Response('{}', { status: calls.length === 2 ? 402 : 200 });
       },
     });
 
