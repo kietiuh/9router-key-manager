@@ -50,6 +50,7 @@ function summaryWithUsage(percentOfLimit: number, windowEnd: string): KeyUsageSu
     imageDailyLimit: null,
     imageDailyUsed: 0,
     actionOnLimit: 'disable',
+    allowFinalFallback: true,
     usageMultiplier: 1,
     actualPrompt: 700,
     actualCompletion: 220,

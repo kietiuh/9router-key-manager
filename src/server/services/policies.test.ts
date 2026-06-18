@@ -8,7 +8,7 @@ function summary(partial: Partial<KeyUsageSummary>): KeyUsageSummary {
   return {
     keyId: 'a', name: 'A', keyMasked: 'sk-…', isActive: true, status: 'ok', statusReason: 'Healthy',
     windowStart: '2026-01-01T00:00:00.000Z', windowEnd: null, resetPolicy: 'manual', expiresAt: null,
-    tokenLimit: 100, actionOnLimit: 'alert', usageMultiplier: 1, usageMultiplierEffectiveAt: null,
+    tokenLimit: 100, actionOnLimit: 'alert', allowFinalFallback: true, usageMultiplier: 1, usageMultiplierEffectiveAt: null,
     actualPrompt: 0, actualCompletion: 0, actualTotal: 0, dedupedRequests: 1, duplicateRequests: 0, duplicateTokens: 0,
     req: 1, prompt: 0, completion: 0, total: 0, cost: 0,
     percentOfLimit: 0, firstUsageAt: null, lastUsageAt: null, models: {}, modelUsage: [], ...partial

@@ -14,6 +14,7 @@ function key(status: KeyUsageSummary['status'], isActive = true): KeyUsageSummar
     resetPolicy: 'daily',
     tokenLimit: null,
     actionOnLimit: 'alert',
+    allowFinalFallback: true,
     usageMultiplier: 1,
     actualPrompt: 0,
     actualCompletion: 0,

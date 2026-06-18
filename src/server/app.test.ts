@@ -191,6 +191,73 @@ describe('server app routes', () => {
     expect(second.json().error.code).toBe('client_rpm_exceeded');
   });
 
+  it('uses final fallback by default for known client keys', async () => {
+    const calls: string[] = [];
+    const key = { id: 'key-default-fallback', name: 'Default Fallback', key: 'sk-default-fallback', isActive: true };
+    const { instance: server } = await app({
+      readApiKeys: () => [key],
+      fetchImpl: async (_input, init) => {
+        const model = JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model;
+        calls.push(model);
+        return new Response(JSON.stringify({ model }), { status: model === 'stable/fallback' ? 200 : 500, headers: { 'content-type': 'application/json' } });
+      },
+    });
+    const cookie = await adminCookie(server);
+    await server.inject({
+      method: 'PUT',
+      url: '/api/final-fallback/config',
+      headers: { cookie },
+      payload: { enabled: true, model: 'stable/fallback', models: ['stable/fallback'] },
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+      payload: { model: 'v4/source', messages: [] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(calls).toEqual(['v4/source', 'stable/fallback']);
+  });
+
+  it('does not use final fallback when the client key policy disables it', async () => {
+    const calls: string[] = [];
+    const key = { id: 'key-no-fallback', name: 'No Fallback', key: 'sk-no-fallback', isActive: true };
+    const { instance: server } = await app({
+      readApiKeys: () => [key],
+      fetchImpl: async (_input, init) => {
+        const model = JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model;
+        calls.push(model);
+        return new Response(JSON.stringify({ error: { message: `${model} failed` } }), { status: 500, headers: { 'content-type': 'application/json' } });
+      },
+    });
+    const cookie = await adminCookie(server);
+    await server.inject({
+      method: 'PUT',
+      url: '/api/final-fallback/config',
+      headers: { cookie },
+      payload: { enabled: true, model: 'stable/fallback', models: ['stable/fallback'] },
+    });
+    await server.inject({
+      method: 'PATCH',
+      url: `/api/keys/${key.id}/policy`,
+      headers: { cookie },
+      payload: { allowFinalFallback: false },
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+      payload: { model: 'v4/source', messages: [] },
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect(res.json()).toEqual({ error: { message: 'v4/source failed' } });
+    expect(calls).toEqual(['v4/source']);
+  });
+
   it('returns 404 for removed image feature endpoints', async () => {
     const { instance: server } = await app();
     const cookie = await adminCookie(server);

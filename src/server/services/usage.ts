@@ -12,6 +12,7 @@ export type Policy = {
   image_daily_used?: number | null;
   expires_at?: string | null;
   action_on_limit?: 'alert' | 'disable' | 'none' | null;
+  allow_final_fallback?: number | boolean | null;
   usage_multiplier?: number | null;
   usage_multiplier_effective_at?: string | null;
   usage_multiplier_events?: Array<{ multiplier: number; effective_at: string }> | null;
@@ -138,6 +139,7 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
       imageDailyLimit: p?.image_daily_limit ?? null,
       imageDailyUsed: Number(p?.image_daily_used ?? 0),
       actionOnLimit: p?.action_on_limit ?? 'alert',
+      allowFinalFallback: p?.allow_final_fallback == null ? true : Number(p.allow_final_fallback) !== 0,
       usageMultiplier: multiplier,
       usageMultiplierEffectiveAt: multiplierEffectiveAt,
       actualPrompt, actualCompletion, actualTotal,

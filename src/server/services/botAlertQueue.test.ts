@@ -22,6 +22,7 @@ function summary(partial: Partial<KeyUsageSummary> = {}): KeyUsageSummary {
     imageDailyLimit: null,
     imageDailyUsed: 0,
     actionOnLimit: 'disable',
+    allowFinalFallback: true,
     usageMultiplier: 1,
     usageMultiplierEffectiveAt: null,
     actualPrompt: 400,

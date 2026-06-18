@@ -20,6 +20,16 @@ describe('summarizeKeyUsage', () => {
     expect(out.find(x => x.keyId === 'b')?.total).toBe(10);
   });
 
+  it('reports final fallback policy with default allow behavior', () => {
+    const out = summarizeKeyUsage(keys, [], [
+      { key_id: 'a', window_start: '2026-05-01T00:00:00.000Z', allow_final_fallback: 0 },
+      { key_id: 'b', window_start: '2026-05-01T00:00:00.000Z' },
+    ]);
+
+    expect(out.find(x => x.keyId === 'a')?.allowFinalFallback).toBe(false);
+    expect(out.find(x => x.keyId === 'b')?.allowFinalFallback).toBe(true);
+  });
+
   it('dedupes 9router double-written records before summing', () => {
     const rows = [
       { apiKey: 'sk-aaaaaaaaaaaaaaaa', provider: 'p', connectionId: 'c', model: 'm1', timestamp: '2026-05-02T00:00:00.000Z', tokens: { prompt_tokens: 100, completion_tokens: 20, cache_read_input_tokens: 80 }, cost: 0.1 } as any,
