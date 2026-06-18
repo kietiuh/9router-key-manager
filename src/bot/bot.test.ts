@@ -86,6 +86,7 @@ function quotaSummary(overrides: Partial<KeyUsageSummary> = {}): KeyUsageSummary
     imageDailyLimit: null,
     imageDailyUsed: 0,
     actionOnLimit: 'disable',
+    allowFinalFallback: true,
     usageMultiplier: 1,
     actualPrompt: 100,
     actualCompletion: 20,

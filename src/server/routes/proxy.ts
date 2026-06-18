@@ -40,6 +40,16 @@ function clientRateLimitKey(token: string, key?: { id: string }) {
   return `unknown:${crypto.createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
 }
 
+function readAllowFinalFallback(db: Database.Database, keyId: string | undefined): boolean {
+  if (!keyId) return true;
+  const row = db.prepare('SELECT allow_final_fallback FROM key_policies WHERE key_id = ?').get(keyId) as { allow_final_fallback?: number | null } | undefined;
+  return row?.allow_final_fallback == null ? true : Number(row.allow_final_fallback) !== 0;
+}
+
+function effectiveFinalFallbackConfig(config: FinalFallbackConfig, allowFinalFallback: boolean): FinalFallbackConfig {
+  return allowFinalFallback ? config : { ...config, enabled: false };
+}
+
 export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRouteOptions) {
   const {
     db,
@@ -94,6 +104,7 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
 
       const clientToken = extractBearerToken(req.headers.authorization);
       const clientKey = clientToken ? lookupKey(clientToken) : undefined;
+      const allowFinalFallback = readAllowFinalFallback(db, clientKey?.id);
       const clientLimitKey = clientToken ? clientRateLimitKey(clientToken, clientKey) : undefined;
       let clientLease: ClientRateLimitLease | undefined;
       let clientLeaseReleased = false;
@@ -139,7 +150,7 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
           method,
           headers,
           decision,
-          finalFallback: finalFallbackStore.get(),
+          finalFallback: effectiveFinalFallbackConfig(finalFallbackStore.get(), allowFinalFallback),
           disableModelFallback,
           userId,
           largeContextThresholdTokens,

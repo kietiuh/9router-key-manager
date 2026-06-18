@@ -15,6 +15,7 @@ const PolicyPatch = z.object({
   expiresAt: z.string().nullable().optional(),
   resetPolicy: z.enum(['manual', 'daily', 'monthly', 'custom']).optional(),
   actionOnLimit: z.enum(['alert', 'disable', 'none']).optional(),
+  allowFinalFallback: z.boolean().optional(),
   notes: z.string().nullable().optional(),
   usageMultiplier: z.number().min(0).max(100).optional(),
 });
@@ -114,7 +115,7 @@ export async function registerAdminRoutes(app: FastifyInstance, options: AdminRo
       const multiplierChanged = body.usageMultiplier !== undefined && nextMultiplier !== currentMultiplier;
       const effectiveAt = multiplierChanged ? new Date().toISOString() : current.usage_multiplier_effective_at;
       db.transaction(() => {
-        db.prepare(`UPDATE key_policies SET token_limit = ?, image_daily_limit = ?, window_start = ?, window_end = ?, expires_at = ?, reset_policy = ?, action_on_limit = ?, notes = ?, usage_multiplier = ?, usage_multiplier_effective_at = ?, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?`).run(
+        db.prepare(`UPDATE key_policies SET token_limit = ?, image_daily_limit = ?, window_start = ?, window_end = ?, expires_at = ?, reset_policy = ?, action_on_limit = ?, notes = ?, allow_final_fallback = ?, usage_multiplier = ?, usage_multiplier_effective_at = ?, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?`).run(
           body.tokenLimit === undefined ? current.token_limit : body.tokenLimit,
           body.imageDailyLimit === undefined ? current.image_daily_limit : body.imageDailyLimit,
           body.windowStart ?? current.window_start,
@@ -123,6 +124,7 @@ export async function registerAdminRoutes(app: FastifyInstance, options: AdminRo
           body.resetPolicy ?? current.reset_policy,
           body.actionOnLimit ?? current.action_on_limit,
           body.notes === undefined ? current.notes : body.notes,
+          body.allowFinalFallback === undefined ? current.allow_final_fallback : Number(body.allowFinalFallback),
           nextMultiplier,
           effectiveAt,
           keyId,
