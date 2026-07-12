@@ -113,7 +113,7 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
           log: req.log,
         });
         if (modelAccess.blocked) {
-          req.log.info({ keyId: modelAccess.keyId, model: modelAccess.model }, 'model access blocked');
+          req.log.info({ keyId: modelAccess.keyId, model: modelAccess.model, route: req.raw.url?.split('?')[0] }, 'model access blocked');
           return reply.code(modelAccess.status).send(buildKeyModelNotAllowedErrorBody(modelAccess));
         }
       }
