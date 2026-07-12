@@ -103,6 +103,21 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
         return reply.code(429).send(buildQuotaErrorBody(quota));
       }
 
+      if (method !== 'GET' && method !== 'HEAD') {
+        const parsed = parseModelRewriteRequest(rawBody ?? Buffer.from(''), req.headers['content-type']);
+        const modelAccess = evaluateKeyModelAccessInterceptor({
+          db,
+          authHeader: req.headers.authorization,
+          rawModel: parsed.model,
+          lookupKey,
+          log: req.log,
+        });
+        if (modelAccess.blocked) {
+          req.log.info({ keyId: modelAccess.keyId, model: modelAccess.model }, 'model access blocked');
+          return reply.code(modelAccess.status).send(buildKeyModelNotAllowedErrorBody(modelAccess));
+        }
+      }
+
       const clientToken = extractBearerToken(req.headers.authorization);
       const clientKey = clientToken ? lookupKey(clientToken) : undefined;
       const allowFinalFallback = readAllowFinalFallback(db, clientKey?.id);
@@ -132,18 +147,6 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
       let rewritePlan: RewriteTargetPlan | undefined;
       if (method !== 'GET' && method !== 'HEAD') {
         const parsed = parseModelRewriteRequest(rawBody ?? Buffer.from(''), req.headers['content-type']);
-        const modelAccess = evaluateKeyModelAccessInterceptor({
-          db,
-          authHeader: req.headers.authorization,
-          rawModel: parsed.model,
-          lookupKey,
-          log: req.log,
-        });
-        if (modelAccess.blocked) {
-          req.log.info({ keyId: modelAccess.keyId, model: modelAccess.model }, 'model access blocked');
-          releaseClientLease();
-          return reply.code(modelAccess.status).send(buildKeyModelNotAllowedErrorBody(modelAccess));
-        }
         rewritePlan = parsed.model ? selectModelRewriteTargets(db, parsed.model) : undefined;
         decision = applyRewritePlan(parsed, rewritePlan);
         if (decision.rewritten) req.log.info({ fromModel: decision.fromModel, toModel: decision.toModel, targets: decision.targets }, 'model rewritten');
