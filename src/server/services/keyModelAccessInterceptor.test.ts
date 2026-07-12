@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   buildKeyModelNotAllowedErrorBody,
@@ -38,6 +38,28 @@ describe('readAllowedModels', () => {
   it('returns [] on invalid JSON', () => {
     db.prepare('INSERT INTO key_policies (key_id, allowed_models_json) VALUES (?, ?)').run('k1', 'not-json');
     expect(readAllowedModels(db, 'k1')).toEqual([]);
+  });
+
+  it('returns [] and warns the logger when JSON is malformed', () => {
+    const warn = vi.fn();
+    const logger = { warn, info: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    db.prepare('INSERT INTO key_policies (key_id, allowed_models_json) VALUES (?, ?)').run('k1', 'not-json');
+    expect(readAllowedModels(db, 'k1', logger)).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      { keyId: 'k1', reason: 'malformed_whitelist_json' },
+      'key policy whitelist unparseable; treating as full access',
+    );
+  });
+
+  it('returns [] and warns the logger when parsed value is not an array', () => {
+    const warn = vi.fn();
+    const logger = { warn, info: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    db.prepare('INSERT INTO key_policies (key_id, allowed_models_json) VALUES (?, ?)').run('k1', JSON.stringify({ not: 'an array' }));
+    expect(readAllowedModels(db, 'k1', logger)).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      { keyId: 'k1', reason: 'malformed_whitelist_json' },
+      'key policy whitelist unparseable; treating as full access',
+    );
   });
 });
 

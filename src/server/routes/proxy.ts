@@ -137,6 +137,7 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
           authHeader: req.headers.authorization,
           rawModel: parsed.model,
           lookupKey,
+          log: req.log,
         });
         if (modelAccess.blocked) {
           req.log.info({ keyId: modelAccess.keyId, model: modelAccess.model }, 'model access blocked');

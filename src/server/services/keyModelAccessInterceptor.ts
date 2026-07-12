@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { FastifyLoggerInstance } from 'fastify';
 import { extractBearerToken } from './quotaInterceptor.js';
 
 export type KeyModelAccessLookupResult = {
@@ -6,6 +7,8 @@ export type KeyModelAccessLookupResult = {
 };
 
 export type KeyModelAccessLookup = (token: string) => KeyModelAccessLookupResult | undefined;
+
+export type KeyModelAccessLogger = Pick<FastifyLoggerInstance, 'warn' | 'info' | 'error' | 'debug'>;
 
 export type KeyModelAccessInterceptResult = {
   blocked: true;
@@ -31,15 +34,26 @@ function normalizeList(raw: unknown): string[] {
   return out;
 }
 
-export function readAllowedModels(db: Database.Database, keyId: string): string[] {
+export function readAllowedModels(
+  db: Database.Database,
+  keyId: string,
+  logger?: KeyModelAccessLogger,
+): string[] {
   const row = db.prepare('SELECT allowed_models_json FROM key_policies WHERE key_id = ?').get(keyId) as { allowed_models_json?: string | null } | undefined;
   const raw = row?.allowed_models_json;
   if (!raw) return [];
+  let parsed: unknown;
   try {
-    return normalizeList(JSON.parse(raw));
+    parsed = JSON.parse(raw);
   } catch {
+    logger?.warn({ keyId, reason: 'malformed_whitelist_json' }, 'key policy whitelist unparseable; treating as full access');
     return [];
   }
+  if (!Array.isArray(parsed)) {
+    logger?.warn({ keyId, reason: 'malformed_whitelist_json' }, 'key policy whitelist unparseable; treating as full access');
+    return [];
+  }
+  return normalizeList(parsed);
 }
 
 export function evaluateKeyModelAccessInterceptor(opts: {
@@ -47,6 +61,7 @@ export function evaluateKeyModelAccessInterceptor(opts: {
   authHeader: string | string[] | undefined;
   rawModel: string | undefined;
   lookupKey: KeyModelAccessLookup;
+  log?: KeyModelAccessLogger;
 }): KeyModelAccessInterceptResult {
   const token = extractBearerToken(opts.authHeader);
   if (!token) return { blocked: false };
@@ -54,7 +69,7 @@ export function evaluateKeyModelAccessInterceptor(opts: {
   if (!key) return { blocked: false };
   const model = typeof opts.rawModel === 'string' ? opts.rawModel : '';
   if (!model) return { blocked: false };
-  const allowedModels = readAllowedModels(opts.db, key.id);
+  const allowedModels = readAllowedModels(opts.db, key.id, opts.log);
   if (!allowedModels.length) return { blocked: false };
   if (allowedModels.includes(model)) return { blocked: false };
   return {
