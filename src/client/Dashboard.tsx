@@ -11,6 +11,7 @@ import { FinalFallbackPanel, ModelRewritePanel, type RewriteDraftGroup } from '.
 import { AdminTabBar } from './AdminTabBar';
 import type { Audit } from './adminTypes';
 import { DEFAULT_ADMIN_TAB, getAdminTabCounts, isKeyAttention, type AdminTab } from './adminTabs';
+import { keyDetailPath, navigateTo } from './keyDetail';
 
 const ADMIN_AUTO_REFRESH_MS = 60_000;
 const ADMIN_TAB_STORAGE_KEY = 'gocinema-admin-active-tab';
@@ -139,10 +140,14 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
     await refresh();
   }
 
+  function viewKeyDetail(k: KeyUsageSummary) {
+    navigateTo(keyDetailPath(k.keyId));
+  }
+
   async function logout() {
     await api('/api/auth/logout', { method: 'POST' });
     onLogout();
   }
 
-  return <main><header><div><h1>{t.title}</h1><p>{t.subtitle}</p></div><div className="headActions"><select value={lang} onChange={e => setLang(e.target.value as Lang)}><option value="vi">VI</option><option value="en">EN</option></select><button onClick={refresh}>{t.refresh}</button><button type="button" onClick={logout}>{t.logout}</button></div></header>{error && <pre className="error">{error}</pre>}{config && !config.ok && <section className="setup"><h2>{t.setup}</h2>{config.errors.map(e => <p key={e}>{e}</p>)}</section>}<section className="adminShell"><AdminTabBar active={activeTab} counts={tabCounts} lang={lang} onChange={changeTab} /><div className="adminTabPanel" role="tabpanel">{activeTab === 'overview' && <><AdminSummaryCards config={config} keys={keys} lang={lang} totals={totals} /><RecommendedFlow lang={lang} /><AttentionPanel config={config} keys={keys} lang={lang} onSelect={setSelected} /></>}{activeTab === 'keys' && <AdminKeysSection filter={filter} keys={keys} lang={lang} onFilter={setFilter} onSelect={setSelected} />}{activeTab === 'traffic' && <TrafficPanel summary={trafficSummary} error={trafficError} clientRateLimitConfig={clientRateLimitConfig} modelRateLimitConfig={modelRateLimitConfig} savingClientRateLimit={saving === 'client-rate-limit'} savingModelRateLimit={saving === 'model-rate-limit'} onSaveClientRateLimit={saveClientRateLimitConfig} onSaveModelRateLimit={saveModelRateLimitConfig} />}{activeTab === 'routing' && <><ModelRewritePanel config={rewriteConfig} onSave={saveRewriteConfig} saving={saving === 'model-rewrite'} /><FinalFallbackPanel config={finalFallbackConfig} onSave={saveFinalFallbackConfig} saving={saving === 'final-fallback'} /></>}</div></section>{selected && <KeyDrawer selected={selected} audit={audit} config={config} lang={lang} saving={saving} onClose={() => setSelected(null)} onQuickDaily={quickDaily} onSavePolicy={savePolicy} onResetWindow={resetWindow} />}</main>;
+  return <main><header><div><h1>{t.title}</h1><p>{t.subtitle}</p></div><div className="headActions"><select value={lang} onChange={e => setLang(e.target.value as Lang)}><option value="vi">VI</option><option value="en">EN</option></select><button onClick={refresh}>{t.refresh}</button><button type="button" onClick={logout}>{t.logout}</button></div></header>{error && <pre className="error">{error}</pre>}{config && !config.ok && <section className="setup"><h2>{t.setup}</h2>{config.errors.map(e => <p key={e}>{e}</p>)}</section>}<section className="adminShell"><AdminTabBar active={activeTab} counts={tabCounts} lang={lang} onChange={changeTab} /><div className="adminTabPanel" role="tabpanel">{activeTab === 'overview' && <><AdminSummaryCards config={config} keys={keys} lang={lang} totals={totals} /><RecommendedFlow lang={lang} /><AttentionPanel config={config} keys={keys} lang={lang} onSelect={setSelected} /></>}{activeTab === 'keys' && <AdminKeysSection filter={filter} keys={keys} lang={lang} onFilter={setFilter} onSelect={setSelected} />}{activeTab === 'traffic' && <TrafficPanel summary={trafficSummary} error={trafficError} clientRateLimitConfig={clientRateLimitConfig} modelRateLimitConfig={modelRateLimitConfig} savingClientRateLimit={saving === 'client-rate-limit'} savingModelRateLimit={saving === 'model-rate-limit'} onSaveClientRateLimit={saveClientRateLimitConfig} onSaveModelRateLimit={saveModelRateLimitConfig} />}{activeTab === 'routing' && <><ModelRewritePanel config={rewriteConfig} onSave={saveRewriteConfig} saving={saving === 'model-rewrite'} /><FinalFallbackPanel config={finalFallbackConfig} onSave={saveFinalFallbackConfig} saving={saving === 'final-fallback'} /></>}</div></section>{selected && <KeyDrawer selected={selected} audit={audit} config={config} lang={lang} saving={saving} onClose={() => setSelected(null)} onQuickDaily={quickDaily} onSavePolicy={savePolicy} onResetWindow={resetWindow} onViewDetail={viewKeyDetail} />}</main>;
 }

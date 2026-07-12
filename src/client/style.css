@@ -28,6 +28,8 @@ table { width: 100%; border-collapse: collapse; min-width: 980px; } th, td { pad
 .meter { height: 9px; min-width: 120px; background: #29334a; border-radius: 999px; overflow: hidden; margin-bottom: 4px; } .meter div { height: 100%; background: linear-gradient(90deg, #3ddc97, #ffd166, #ef476f); }
 .drawer { position: fixed; top: 0; right: 0; width: min(520px, calc(100vw - 32px)); height: 100vh; background: #0f1728; border-left: 1px solid #303d59; box-shadow: -20px 0 60px #0008; padding: 22px; overflow:auto; z-index: 10; }
 .close { float: right; background: #28324a; font-size: 22px; padding: 4px 12px; }
+.linkButton { background:none; color:#72f0b8; border:0; padding:0 0 0 6px; cursor:pointer; text-decoration:underline; text-transform:uppercase; letter-spacing:.08em; font-size:11px; font-weight:700; }
+.linkButton:hover { filter:brightness(1.15); }
 .reason { background: #172238; border: 1px solid #303d59; border-radius: 12px; padding: 10px; }
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 label { color: #9aa7bd; font-size: 12px; display:block; margin-bottom: 10px; } label b { color: #e6edf7; display:block; font-size: 15px; margin-top: 2px; }
