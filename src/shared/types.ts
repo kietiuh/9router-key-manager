@@ -48,6 +48,7 @@ export type KeyUsageSummary = {
   imageDailyUsed?: number;
   actionOnLimit: 'alert' | 'disable' | 'none';
   allowFinalFallback: boolean;
+  allowedModels?: string[];
   usageMultiplier: number;
   usageMultiplierEffectiveAt?: string | null;
   actualPrompt: number;
