@@ -50,16 +50,23 @@ export function runWatcherOnce(db: Database.Database, options: WatcherOptions = 
   const events = evaluateLimits(summaries);
   const actions: any[] = [...restored];
   for (const event of events) {
-    if (!shouldEmitAlert(db, event)) continue;
-    writeAudit(db, event.keyId, event.action, event.message);
+    const shouldEmit = shouldEmitAlert(db, event);
+    if (shouldEmit) writeAudit(db, event.keyId, event.action, event.message);
     if (event.action === 'disable' && options.hardDisable) {
-      const result = atomicDisableApiKey(event.keyId, options.baseDir);
       const summary = summaries.find(s => s.keyId === event.keyId);
-      if (summary?.resetPolicy === 'daily') {
-        db.prepare('INSERT OR REPLACE INTO auto_disabled_keys (key_id, disabled_for_window_start, reason) VALUES (?, ?, ?)').run(event.keyId, summary.windowStart, event.message);
+      const alreadyAutoDisabled = summary?.resetPolicy === 'daily'
+        ? !!db.prepare('SELECT 1 FROM auto_disabled_keys WHERE key_id = ? AND disabled_for_window_start = ?').get(event.keyId, summary.windowStart)
+        : false;
+      if (!alreadyAutoDisabled && summary?.isActive !== false) {
+        const result = atomicDisableApiKey(event.keyId, options.baseDir);
+        if (summary?.resetPolicy === 'daily') {
+          db.prepare('INSERT OR REPLACE INTO auto_disabled_keys (key_id, disabled_for_window_start, reason) VALUES (?, ?, ?)').run(event.keyId, summary.windowStart, event.message);
+        }
+        actions.push({ ...event, result });
+      } else if (shouldEmit) {
+        actions.push(event);
       }
-      actions.push({ ...event, result });
-    } else {
+    } else if (shouldEmit) {
       actions.push(event);
     }
   }

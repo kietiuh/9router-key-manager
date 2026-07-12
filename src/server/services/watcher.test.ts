@@ -56,6 +56,22 @@ describe('runWatcherOnce', () => {
     expect(db.prepare('SELECT COUNT(*) as n FROM audit_log').get()).toMatchObject({ n: 1 });
   });
 
+  it('hard-disables a quota breach that was previously seen in dry-run mode', () => {
+    const { dir, db } = fixture();
+    db.prepare('UPDATE key_policies SET reset_policy = ? WHERE key_id = ?').run('daily', 'a');
+    fs.writeFileSync(path.join(dir, 'usage.json'), JSON.stringify({ history: [{ apiKey: 'sk-a', model: 'm', timestamp: new Date().toISOString(), tokens: { total_tokens: 101 } }] }, null, 2));
+    const dryRun = runWatcherOnce(db, { baseDir: dir, hardDisable: false });
+    expect(dryRun.events).toHaveLength(1);
+    expect(db.prepare('SELECT COUNT(*) as n FROM alert_state').get()).toMatchObject({ n: 1 });
+
+    const out = runWatcherOnce(db, { baseDir: dir, hardDisable: true });
+
+    const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
+    expect(after.apiKeys[0].isActive).toBe(false);
+    expect(out.actions.some((a: any) => a.action === 'disable')).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) as n FROM auto_disabled_keys WHERE key_id = ?').get('a')).toMatchObject({ n: 1 });
+  });
+
   it('auto-enables daily quota lockouts when a new day window starts', () => {
     const { dir, db } = fixture();
     db.prepare('UPDATE key_policies SET reset_policy = ?, window_start = ? WHERE key_id = ?').run('daily', '2026-01-01T00:00:00.000Z', 'a');
