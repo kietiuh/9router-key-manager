@@ -22,6 +22,8 @@ export function KeyDrawer({ selected, audit, config, lang, saving, onClose, onQu
       <label>{t.action}<select name="actionOnLimit" defaultValue={selected.actionOnLimit}><option value="disable">disable</option><option value="alert">alert</option><option value="none">none</option></select></label>
       <label>{t.multiplier}<input name="usageMultiplier" type="number" min="0" max="100" step="0.01" defaultValue={selected.usageMultiplier ?? 1} /></label>
       <label>{t.finalFallback}<input name="allowFinalFallback" type="checkbox" defaultChecked={selected.allowFinalFallback !== false} /></label>
+      <label>{t.allowedModels}<textarea name="allowedModels" rows={3} placeholder={t.allowedModelsPlaceholder} defaultValue={(selected.allowedModels ?? []).join('\n')} /></label>
+      <p className="hintText">{t.allowedModelsHint}</p>
       <label>{t.expires}<input name="expiresAt" type="datetime-local" defaultValue={toVnInput(selected.expiresAt)} /></label>
       <div className="actions"><button disabled={saving === selected.keyId}>{saving === selected.keyId ? t.saving : t.save}</button><button type="button" disabled={selected.resetPolicy === 'daily' || selected.resetPolicy === 'monthly'} onClick={() => onResetWindow(selected)}>{t.resetNow}</button></div>
     </form>
