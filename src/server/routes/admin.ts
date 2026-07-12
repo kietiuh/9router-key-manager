@@ -18,6 +18,7 @@ const PolicyPatch = z.object({
   allowFinalFallback: z.boolean().optional(),
   notes: z.string().nullable().optional(),
   usageMultiplier: z.number().min(0).max(100).optional(),
+  allowedModels: z.array(z.string()).nullable().optional(),
 });
 const ModelRewriteRuleBody = z.object({ id: z.number().int().positive().optional(), groupId: z.number().int().positive().nullable().optional(), enabled: z.boolean().optional(), fromModel: z.string(), toModel: z.string().nullable().optional(), toModels: z.array(z.string()).optional(), stickyCount: z.number().int().positive().optional(), targetWeights: z.array(z.number().int().positive()).optional() });
 const ModelRewriteGroupBody = z.object({ id: z.number().int().positive().optional(), name: z.string().optional(), enabled: z.boolean().optional(), rules: z.array(ModelRewriteRuleBody).optional() });
@@ -57,6 +58,19 @@ export type AdminRouteOptions = {
   invalidateUsageSummaryCache: () => void;
   hardDisable: () => boolean;
 };
+
+function normalizeAllowedModels(input: string[] | null | undefined): string[] | null {
+  if (input == null) return null;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of input) {
+    const value = String(item ?? '').trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out.length ? out : null;
+}
 
 function mutationOk(keyId: string) {
   return { ok: true, keyId };
@@ -114,8 +128,11 @@ export async function registerAdminRoutes(app: FastifyInstance, options: AdminRo
       const nextMultiplier = body.usageMultiplier === undefined ? currentMultiplier : body.usageMultiplier;
       const multiplierChanged = body.usageMultiplier !== undefined && nextMultiplier !== currentMultiplier;
       const effectiveAt = multiplierChanged ? new Date().toISOString() : current.usage_multiplier_effective_at;
+      const nextAllowedModels = body.allowedModels === undefined
+        ? (current.allowed_models_json ?? null)
+        : (() => { const n = normalizeAllowedModels(body.allowedModels); return n ? JSON.stringify(n) : null; })();
       db.transaction(() => {
-        db.prepare(`UPDATE key_policies SET token_limit = ?, image_daily_limit = ?, window_start = ?, window_end = ?, expires_at = ?, reset_policy = ?, action_on_limit = ?, notes = ?, allow_final_fallback = ?, usage_multiplier = ?, usage_multiplier_effective_at = ?, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?`).run(
+        db.prepare(`UPDATE key_policies SET token_limit = ?, image_daily_limit = ?, window_start = ?, window_end = ?, expires_at = ?, reset_policy = ?, action_on_limit = ?, notes = ?, allow_final_fallback = ?, usage_multiplier = ?, usage_multiplier_effective_at = ?, allowed_models_json = ?, updated_at = CURRENT_TIMESTAMP WHERE key_id = ?`).run(
           body.tokenLimit === undefined ? current.token_limit : body.tokenLimit,
           body.imageDailyLimit === undefined ? current.image_daily_limit : body.imageDailyLimit,
           body.windowStart ?? current.window_start,
@@ -127,6 +144,7 @@ export async function registerAdminRoutes(app: FastifyInstance, options: AdminRo
           body.allowFinalFallback === undefined ? current.allow_final_fallback : Number(body.allowFinalFallback),
           nextMultiplier,
           effectiveAt,
+          nextAllowedModels,
           keyId,
         );
         if (multiplierChanged) db.prepare('INSERT INTO usage_multiplier_events (key_id, multiplier, effective_at) VALUES (?, ?, ?)').run(keyId, nextMultiplier, effectiveAt);
