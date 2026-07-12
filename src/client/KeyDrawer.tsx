@@ -10,7 +10,7 @@ export function KeyDrawer({ selected, audit, config, lang, saving, onClose, onQu
 
   return <aside className="drawer">
     <button className="close" onClick={onClose}>×</button>    <h2>{selected.name}</h2>
-    <p><code>{selected.keyMasked}</code> <span className={`pill ${selected.status}`}>{statusLabel(selected.status, lang)}</span> <button type="button" className="linkButton" onClick={() => onViewDetail(selected)}>{t.viewDetail}</button></p>
+    <p><code>{selected.keyMasked}</code> <span className={`pill ${selected.status}`}>{statusLabel(selected.status, lang)}</span>{selected.allowedModels && selected.allowedModels.length > 0 && <span className="pill warning"> {t.restrictedBadge} · {selected.allowedModels.length}</span>} <button type="button" className="linkButton" onClick={() => onViewDetail(selected)}>{t.viewDetail}</button></p>
     <p className="reason"><b>{selected.statusReason}</b><br />{recommendation(selected.status, selected.actionOnLimit, config?.hardDisable, lang)}</p>
     <div className="quick">
       <button type="button" onClick={() => onQuickDaily(selected, Math.max(selected.total * 2, 1_000_000))}>{t.quick1}</button>
