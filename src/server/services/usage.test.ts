@@ -80,4 +80,18 @@ describe('summarizeKeyUsage', () => {
     expect(out.total).toBe(700);
     expect(out.percentOfLimit).toBeNull();
   });
+
+  it('exposes allowedModels parsed from the policy column', () => {
+    const keys = [{ id: 'k1', name: 'K1', key: 'sk-1', isActive: true }];
+    const policies = [{ key_id: 'k1', window_start: '1970-01-01T00:00:00.000Z', allowed_models_json: JSON.stringify(['claude-opus-4.8', '', 'claude-opus-4.8']) }];
+    const summary = summarizeKeyUsage(keys, [], policies).at(0)!;
+    expect(summary.allowedModels).toEqual(['claude-opus-4.8']);
+  });
+
+  it('returns an empty allowedModels list when the column is null', () => {
+    const keys = [{ id: 'k1', name: 'K1', key: 'sk-1', isActive: true }];
+    const policies = [{ key_id: 'k1', window_start: '1970-01-01T00:00:00.000Z', allowed_models_json: null }];
+    const summary = summarizeKeyUsage(keys, [], policies).at(0)!;
+    expect(summary.allowedModels).toEqual([]);
+  });
 });

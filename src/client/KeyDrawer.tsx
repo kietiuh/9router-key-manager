@@ -10,7 +10,7 @@ export function KeyDrawer({ selected, audit, config, lang, saving, onClose, onQu
 
   return <aside className="drawer">
     <button className="close" onClick={onClose}>×</button>    <h2>{selected.name}</h2>
-    <p><code>{selected.keyMasked}</code> <span className={`pill ${selected.status}`}>{statusLabel(selected.status, lang)}</span> <button type="button" className="linkButton" onClick={() => onViewDetail(selected)}>{t.viewDetail}</button></p>
+    <p><code>{selected.keyMasked}</code> <span className={`pill ${selected.status}`}>{statusLabel(selected.status, lang)}</span>{selected.allowedModels && selected.allowedModels.length > 0 && <span className="pill warning"> {t.restrictedBadge} · {selected.allowedModels.length}</span>} <button type="button" className="linkButton" onClick={() => onViewDetail(selected)}>{t.viewDetail}</button></p>
     <p className="reason"><b>{selected.statusReason}</b><br />{recommendation(selected.status, selected.actionOnLimit, config?.hardDisable, lang)}</p>
     <div className="quick">
       <button type="button" onClick={() => onQuickDaily(selected, Math.max(selected.total * 2, 1_000_000))}>{t.quick1}</button>
@@ -22,6 +22,8 @@ export function KeyDrawer({ selected, audit, config, lang, saving, onClose, onQu
       <label>{t.action}<select name="actionOnLimit" defaultValue={selected.actionOnLimit}><option value="disable">disable</option><option value="alert">alert</option><option value="none">none</option></select></label>
       <label>{t.multiplier}<input name="usageMultiplier" type="number" min="0" max="100" step="0.01" defaultValue={selected.usageMultiplier ?? 1} /></label>
       <label>{t.finalFallback}<input name="allowFinalFallback" type="checkbox" defaultChecked={selected.allowFinalFallback !== false} /></label>
+      <label>{t.allowedModels}<textarea name="allowedModels" rows={3} placeholder={t.allowedModelsPlaceholder} defaultValue={(selected.allowedModels ?? []).join('\n')} /></label>
+      <p className="hintText">{t.allowedModelsHint}</p>
       <label>{t.expires}<input name="expiresAt" type="datetime-local" defaultValue={toVnInput(selected.expiresAt)} /></label>
       <div className="actions"><button disabled={saving === selected.keyId}>{saving === selected.keyId ? t.saving : t.save}</button><button type="button" disabled={selected.resetPolicy === 'daily' || selected.resetPolicy === 'monthly'} onClick={() => onResetWindow(selected)}>{t.resetNow}</button></div>
     </form>

@@ -16,6 +16,7 @@ export type Policy = {
   usage_multiplier?: number | null;
   usage_multiplier_effective_at?: string | null;
   usage_multiplier_events?: Array<{ multiplier: number; effective_at: string }> | null;
+  allowed_models_json?: string | null;
 };
 
 function dedupeSignature(r: UsageRecord): string {
@@ -47,6 +48,22 @@ function multiplierAt(timestamp: string, events: Array<{ multiplier: number; eff
 function tokenTotal(r: UsageRecord): number {
   const t = r.tokens ?? {};
   return t.total_tokens ?? ((t.prompt_tokens ?? 0) + (t.completion_tokens ?? 0));
+}
+
+function parseAllowedModels(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return []; }
+  if (!Array.isArray(parsed)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of parsed) {
+    const value = String(item ?? '').trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
 }
 
 export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], policies: Policy[], nowIso = new Date().toISOString()): KeyUsageSummary[] {
@@ -140,6 +157,7 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
       imageDailyUsed: Number(p?.image_daily_used ?? 0),
       actionOnLimit: p?.action_on_limit ?? 'alert',
       allowFinalFallback: p?.allow_final_fallback == null ? true : Number(p.allow_final_fallback) !== 0,
+      allowedModels: parseAllowedModels(p?.allowed_models_json),
       usageMultiplier: multiplier,
       usageMultiplierEffectiveAt: multiplierEffectiveAt,
       actualPrompt, actualCompletion, actualTotal,

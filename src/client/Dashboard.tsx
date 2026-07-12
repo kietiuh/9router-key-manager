@@ -81,7 +81,9 @@ export function Dashboard({ lang, setLang, onLogout }: { lang: Lang; setLang: (l
     const fd = new FormData(form);
     setSaving(k.keyId);
     try {
-      await api(`/api/keys/${k.keyId}/policy`, { method: 'PATCH', body: JSON.stringify({ tokenLimit: fd.get('tokenLimit') ? Number(fd.get('tokenLimit')) : null, actionOnLimit: fd.get('actionOnLimit'), resetPolicy: fd.get('resetPolicy'), expiresAt: fromVnInput(fd.get('expiresAt')), usageMultiplier: fd.get('usageMultiplier') ? Number(fd.get('usageMultiplier')) : 1, allowFinalFallback: fd.get('allowFinalFallback') === 'on' }) });
+      const allowedRaw = String(fd.get('allowedModels') ?? '');
+      const allowedModels = allowedRaw.split('\n').map(s => s.trim()).filter(Boolean);
+      await api(`/api/keys/${k.keyId}/policy`, { method: 'PATCH', body: JSON.stringify({ tokenLimit: fd.get('tokenLimit') ? Number(fd.get('tokenLimit')) : null, actionOnLimit: fd.get('actionOnLimit'), resetPolicy: fd.get('resetPolicy'), expiresAt: fromVnInput(fd.get('expiresAt')), usageMultiplier: fd.get('usageMultiplier') ? Number(fd.get('usageMultiplier')) : 1, allowFinalFallback: fd.get('allowFinalFallback') === 'on', allowedModels: allowedModels.length ? allowedModels : null }) });
       await refresh();
     } finally {
       setSaving('');

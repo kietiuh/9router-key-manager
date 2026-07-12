@@ -15,6 +15,7 @@ export function migrate(db: Database.Database): void {
       action_on_limit TEXT NOT NULL DEFAULT 'alert',
       notes TEXT,
       allow_final_fallback INTEGER NOT NULL DEFAULT 1,
+      allowed_models_json TEXT,
       usage_multiplier REAL NOT NULL DEFAULT 1.0,
       usage_multiplier_effective_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -144,6 +145,7 @@ export function migrate(db: Database.Database): void {
   const names = new Set(cols.map(c => c.name));
   if (!names.has('image_daily_limit')) db.exec('ALTER TABLE key_policies ADD COLUMN image_daily_limit INTEGER');
   if (!names.has('allow_final_fallback')) db.exec('ALTER TABLE key_policies ADD COLUMN allow_final_fallback INTEGER NOT NULL DEFAULT 1');
+  if (!names.has('allowed_models_json')) db.exec('ALTER TABLE key_policies ADD COLUMN allowed_models_json TEXT');
   if (!names.has('usage_multiplier')) db.exec('ALTER TABLE key_policies ADD COLUMN usage_multiplier REAL NOT NULL DEFAULT 1.0');
   if (!names.has('usage_multiplier_effective_at')) db.exec('ALTER TABLE key_policies ADD COLUMN usage_multiplier_effective_at TEXT');
   const imageCols = db.prepare("PRAGMA table_info(image_usage_events)").all() as Array<{ name: string }>;

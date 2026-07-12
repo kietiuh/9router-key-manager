@@ -90,6 +90,7 @@ Important variables:
 - `TRAFFIC_UPSTREAM_TIMEOUTS`: optional active-upstream deadline policy in `model:normalMs:largeContextMs` format.
 - `TRAFFIC_LARGE_CONTEXT_TOKENS`: request-size threshold for large-context upstream deadlines; defaults to `100000`.
 - API-key client rate limiting defaults to `30` RPM and `5` concurrent `/v1/*` requests per key. Configure it from the admin traffic tab; it is stored in `manager.sqlite`, not env.
+- Per-key model whitelist: each key can restrict which **incoming** model names it accepts, configured from the admin key drawer ("Allowed models", one model per line). Empty = full access. Model rewrite targets and final fallback models are **not** restricted — only the raw model in the request body is checked. Stored in `manager.sqlite` (`key_policies.allowed_models_json`).
 - Model RPM limiting is configured from the admin traffic tab and stored in `manager.sqlite`, not env.
 - `TRAFFIC_LOG_LIMITER_SNAPSHOT`: set to `true` only when debugging RPM queue state on successful proxy requests; defaults to compact success logs.
 - `TELEGRAM_BOT_TOKEN`: Telegram token for GoCinema Assistant; never expose or commit it.

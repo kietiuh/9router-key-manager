@@ -148,7 +148,7 @@ app.post('/api/public/key-check', async (req, reply) => {
     const reason = autoDisabledReason(match.id) ?? lastDisableAuditMessage(match.id);
     if (reason) summary.statusReason = reason;
   }
-  const { modelUsage: _modelUsage, models: _models, ...publicSummary } = summary;
+  const { modelUsage: _modelUsage, models: _models, allowedModels: _allowedModels, ...publicSummary } = summary;
   return publicSummary;
 });
 

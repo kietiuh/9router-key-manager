@@ -285,4 +285,158 @@ describe('server app routes', () => {
     expect(imageAlias.statusCode).toBe(404);
   });
 
+  it('blocks a request whose model is not in the key whitelist', async () => {
+    const calls: string[] = [];
+    const key = { id: 'key-restricted', name: 'Restricted', key: 'sk-restricted', isActive: true };
+    const { instance: server } = await app({
+      readApiKeys: () => [key],
+      fetchImpl: async (_input, init) => {
+        calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+      },
+    });
+    const cookie = await adminCookie(server);
+    await server.inject({
+      method: 'PATCH',
+      url: `/api/keys/${key.id}/policy`,
+      headers: { cookie },
+      payload: { allowedModels: ['claude-opus-4.8'] },
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+      payload: { model: 'claude-haiku-5', messages: [] },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('model_not_allowed');
+    expect(res.json().error.allowed_models).toEqual(['claude-opus-4.8']);
+    expect(calls).toEqual([]);
+  });
+
+  it('allows a request whose model is in the key whitelist', async () => {
+    const calls: string[] = [];
+    const key = { id: 'key-allowed', name: 'Allowed', key: 'sk-allowed', isActive: true };
+    const { instance: server } = await app({
+      readApiKeys: () => [key],
+      fetchImpl: async (_input, init) => {
+        calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+      },
+    });
+    const cookie = await adminCookie(server);
+    await server.inject({
+      method: 'PATCH',
+      url: `/api/keys/${key.id}/policy`,
+      headers: { cookie },
+      payload: { allowedModels: ['claude-opus-4.8'] },
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+      payload: { model: 'claude-opus-4.8', messages: [] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(calls).toEqual(['claude-opus-4.8']);
+  });
+
+  it('does not restrict models when the whitelist is cleared with null', async () => {
+    const calls: string[] = [];
+    const key = { id: 'key-cleared', name: 'Cleared', key: 'sk-cleared', isActive: true };
+    const { instance: server } = await app({
+      readApiKeys: () => [key],
+      fetchImpl: async (_input, init) => {
+        calls.push(JSON.parse(Buffer.from(init?.body as Buffer).toString('utf8')).model);
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+      },
+    });
+    const cookie = await adminCookie(server);
+    await server.inject({ method: 'PATCH', url: `/api/keys/${key.id}/policy`, headers: { cookie }, payload: { allowedModels: ['claude-opus-4.8'] } });
+    await server.inject({ method: 'PATCH', url: `/api/keys/${key.id}/policy`, headers: { cookie }, payload: { allowedModels: null } });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+      payload: { model: 'claude-haiku-5', messages: [] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(calls).toEqual(['claude-haiku-5']);
+  });
+
+  it('does not leak allowedModels through the public key-check endpoint', async () => {
+    const key = { id: 'key-public', name: 'Public', key: 'sk-public', isActive: true };
+    const { instance: server } = await app({
+      readApiKeys: () => [key],
+    });
+    const cookie = await adminCookie(server);
+    await server.inject({
+      method: 'PATCH',
+      url: `/api/keys/${key.id}/policy`,
+      headers: { cookie },
+      payload: { allowedModels: ['claude-opus-4.8', 'gpt-5.5'] },
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/api/public/key-check',
+      payload: { key: key.key },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body).not.toHaveProperty('allowedModels');
+  });
+
+  it('allows a whitelisted incoming model even when rewrite maps it to a non-whitelisted target', async () => {
+    const calls: Array<{ model: string; url: string }> = [];
+    const key = { id: 'key-rewrite-via-whitelist', name: 'Rewrite via whitelist', key: 'sk-rewrite-via-whitelist', isActive: true };
+    const { instance: server } = await app({
+      readApiKeys: () => [key],
+      fetchImpl: async (input, init) => {
+        const upstreamUrl = String(input);
+        const body = init?.body as unknown;
+        const parsed = Buffer.isBuffer(body) ? JSON.parse(body.toString('utf8')) : (typeof body === 'string' ? JSON.parse(body) : body);
+        calls.push({ model: parsed?.model, url: upstreamUrl });
+        return new Response(JSON.stringify({ model: parsed?.model }), { status: 200, headers: { 'content-type': 'application/json' } });
+      },
+    });
+    const cookie = await adminCookie(server);
+    await server.inject({
+      method: 'PATCH',
+      url: `/api/keys/${key.id}/policy`,
+      headers: { cookie },
+      payload: { allowedModels: ['claude-opus-4.8'] },
+    });
+    await server.inject({
+      method: 'PUT',
+      url: '/api/model-rewrite/config',
+      headers: { cookie },
+      payload: {
+        enabled: true,
+        rules: [
+          { enabled: true, fromModel: 'claude-opus-4.8', toModel: 'super/claude-opus-4.8', stickyCount: 1 },
+        ],
+      },
+    });
+
+    const res = await server.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+      payload: { model: 'claude-opus-4.8', messages: [] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe('super/claude-opus-4.8');
+    expect(calls[0].url).toMatch(/\/v1\/chat\/completions$/);
+  });
+
 });

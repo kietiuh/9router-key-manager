@@ -8,6 +8,7 @@ import { rollbackModelRewriteSelection, selectModelRewriteTargets, type RewriteT
 import { fetchUpstreamWithFailover, ProxyFailoverError, TrafficAcquireError } from '../services/proxyFailover.js';
 import { buildQuotaErrorBody, evaluateQuotaInterceptor, extractBearerToken } from '../services/quotaInterceptor.js';
 import { buildKeyExpiredErrorBody, evaluateKeyAccessInterceptor } from '../services/keyAccessInterceptor.js';
+import { buildKeyModelNotAllowedErrorBody, evaluateKeyModelAccessInterceptor } from '../services/keyModelAccessInterceptor.js';
 import { buildClientRateLimitErrorBody, ClientRateLimitAcquireError, type ClientRateLimitLease } from '../services/clientRateLimiter.js';
 import type { ClientRateLimiter } from '../services/clientRateLimiter.js';
 import type { ModelRateLimiter, ModelRateLimitLease } from '../services/modelRateLimiter.js';
@@ -100,6 +101,21 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
         reply.header('retry-after', String(quota.retryAfterSeconds));
         if (quota.resetAt) reply.header('x-ratelimit-reset', quota.resetAt);
         return reply.code(429).send(buildQuotaErrorBody(quota));
+      }
+
+      if (method !== 'GET' && method !== 'HEAD') {
+        const parsed = parseModelRewriteRequest(rawBody ?? Buffer.from(''), req.headers['content-type']);
+        const modelAccess = evaluateKeyModelAccessInterceptor({
+          db,
+          authHeader: req.headers.authorization,
+          rawModel: parsed.model,
+          lookupKey,
+          log: req.log,
+        });
+        if (modelAccess.blocked) {
+          req.log.info({ keyId: modelAccess.keyId, model: modelAccess.model, route: req.raw.url?.split('?')[0] }, 'model access blocked');
+          return reply.code(modelAccess.status).send(buildKeyModelNotAllowedErrorBody(modelAccess));
+        }
       }
 
       const clientToken = extractBearerToken(req.headers.authorization);
