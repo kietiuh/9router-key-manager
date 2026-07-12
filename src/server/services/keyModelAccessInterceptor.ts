@@ -52,7 +52,7 @@ export function evaluateKeyModelAccessInterceptor(opts: {
   if (!token) return { blocked: false };
   const key = opts.lookupKey(token);
   if (!key) return { blocked: false };
-  const model = typeof opts.rawModel === 'string' ? opts.rawModel.trim() : '';
+  const model = typeof opts.rawModel === 'string' ? opts.rawModel : '';
   if (!model) return { blocked: false };
   const allowedModels = readAllowedModels(opts.db, key.id);
   if (!allowedModels.length) return { blocked: false };

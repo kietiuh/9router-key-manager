@@ -85,6 +85,31 @@ describe('evaluateKeyModelAccessInterceptor', () => {
       allowedModels: ['claude-opus-4.8', 'gpt-5.5'],
     });
   });
+
+  it('blocks with leading whitespace when rawModel differs from a trimmed whitelist entry', () => {
+    db.prepare('INSERT INTO key_policies (key_id, allowed_models_json) VALUES (?, ?)').run('k1', JSON.stringify(['model-a']));
+    const result = evaluateKeyModelAccessInterceptor({
+      db,
+      authHeader: 'Bearer sk',
+      rawModel: ' model-a ',
+      lookupKey: () => ({ id: 'k1' }),
+    });
+    expect(result.blocked).toBe(true);
+    if (!result.blocked) throw new Error('expected blocked');
+    expect(result.model).toBe(' model-a ');
+    expect(result.allowedModels).toEqual(['model-a']);
+  });
+
+  it('does not block when rawModel exactly matches the trimmed whitelist entry', () => {
+    db.prepare('INSERT INTO key_policies (key_id, allowed_models_json) VALUES (?, ?)').run('k1', JSON.stringify(['model-a']));
+    const result = evaluateKeyModelAccessInterceptor({
+      db,
+      authHeader: 'Bearer sk',
+      rawModel: 'model-a',
+      lookupKey: () => ({ id: 'k1' }),
+    });
+    expect(result.blocked).toBe(false);
+  });
 });
 
 describe('buildKeyModelNotAllowedErrorBody', () => {
