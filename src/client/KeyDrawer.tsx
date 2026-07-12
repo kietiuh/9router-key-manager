@@ -4,14 +4,13 @@ import { fmt, fromVnInput, pct, toVnInput, vnDateTime } from './format';
 import { dict, recommendation, statusLabel, type Lang } from './i18n';
 import type { Audit } from './adminTypes';
 
-export function KeyDrawer({ selected, audit, config, lang, saving, onClose, onQuickDaily, onSavePolicy, onResetWindow }: { selected: KeyUsageSummary; audit: Audit[]; config: ConfigStatus | null; lang: Lang; saving: string; onClose: () => void; onQuickDaily: (k: KeyUsageSummary, limit: number) => void; onSavePolicy: (k: KeyUsageSummary, form: HTMLFormElement) => void; onResetWindow: (k: KeyUsageSummary) => void }) {
+export function KeyDrawer({ selected, audit, config, lang, saving, onClose, onQuickDaily, onSavePolicy, onResetWindow, onViewDetail }: { selected: KeyUsageSummary; audit: Audit[]; config: ConfigStatus | null; lang: Lang; saving: string; onClose: () => void; onQuickDaily: (k: KeyUsageSummary, limit: number) => void; onSavePolicy: (k: KeyUsageSummary, form: HTMLFormElement) => void; onResetWindow: (k: KeyUsageSummary) => void; onViewDetail: (k: KeyUsageSummary) => void }) {
   const t = dict[lang];
   const selectedAudit = audit.filter(a => a.key_id === selected.keyId);
 
   return <aside className="drawer">
-    <button className="close" onClick={onClose}>×</button>
-    <h2>{selected.name}</h2>
-    <p><code>{selected.keyMasked}</code> <span className={`pill ${selected.status}`}>{statusLabel(selected.status, lang)}</span></p>
+    <button className="close" onClick={onClose}>×</button>    <h2>{selected.name}</h2>
+    <p><code>{selected.keyMasked}</code> <span className={`pill ${selected.status}`}>{statusLabel(selected.status, lang)}</span> <button type="button" className="linkButton" onClick={() => onViewDetail(selected)}>{t.viewDetail}</button></p>
     <p className="reason"><b>{selected.statusReason}</b><br />{recommendation(selected.status, selected.actionOnLimit, config?.hardDisable, lang)}</p>
     <div className="quick">
       <button type="button" onClick={() => onQuickDaily(selected, Math.max(selected.total * 2, 1_000_000))}>{t.quick1}</button>
