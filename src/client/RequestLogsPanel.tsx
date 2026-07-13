@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { UsageEventLogRow, UsageEventsLogResponse } from '../shared/types';
 import { api } from './api';
-import { fmt, vnDateTime } from './format';
+import { fmt, vnDateTime, toVnInput, fromVnInput } from './format';
 import { dict, type Lang } from './i18n';
 import {
   applyPreset,
@@ -23,46 +23,55 @@ export function RequestLogsPanel({ keyId, lang }: { keyId: string; lang: Lang })
   const [error, setError] = useState('');
   const [modelsLoading, setModelsLoading] = useState(false);
 
+  // Monotonic request id — used to discard stale responses after filter changes.
+  const reqIdRef = useRef(0);
+
   const current = history[history.length - 1];
 
-  // Load model dropdown once when the key changes.
+  // Load model dropdown whenever the key or the time range changes.
   useEffect(() => {
     let alive = true;
     setModelsLoading(true);
-    api<string[]>(`/api/keys/${encodeURIComponent(keyId)}/usage-events/models`)
+    const params = new URLSearchParams();
+    if (filters.fromIso) params.set('from', filters.fromIso);
+    if (filters.toIso) params.set('to', filters.toIso);
+    const qs = params.toString();
+    api<string[]>(`/api/keys/${encodeURIComponent(keyId)}/usage-events/models${qs ? `?${qs}` : ''}`)
       .then(m => { if (alive) setModels(m); })
       .catch(() => { if (alive) setModels([]); })
       .finally(() => { if (alive) setModelsLoading(false); });
     return () => { alive = false; };
-  }, [keyId]);
+  }, [keyId, filters.fromIso, filters.toIso]);
 
   // Reset history when filters change (but not when navigating pages).
   useEffect(() => {
-    let alive = true;
+    const reqId = ++reqIdRef.current;
     setLoading(true);
     setError('');
     api<UsageEventsLogResponse>(`/api/keys/${encodeURIComponent(keyId)}/usage-events?${buildLogsQuery(filters, null)}`)
       .then(r => {
-        if (!alive) return;
+        if (reqId !== reqIdRef.current) return;
         setHistory([{ cursor: null, nextCursor: r.nextCursor, filters, rows: r.rows, hasMore: r.hasMore }]);
       })
-      .catch(e => { if (alive) setError(e.message ?? String(e)); })
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
+      .catch(e => { if (reqId === reqIdRef.current) setError(e.message ?? String(e)); })
+      .finally(() => { if (reqId === reqIdRef.current) setLoading(false); });
+    return () => { /* requestId bumped; in-flight responses will be ignored */ };
   }, [keyId, filters]);
 
   function loadNext() {
     if (loading) return;
     const last = history[history.length - 1];
     if (!last?.hasMore || !last.nextCursor) return;
+    const reqId = ++reqIdRef.current;
     setLoading(true);
     setError('');
     api<UsageEventsLogResponse>(`/api/keys/${encodeURIComponent(keyId)}/usage-events?${buildLogsQuery(filters, last.nextCursor)}`)
       .then(r => {
+        if (reqId !== reqIdRef.current) return;
         setHistory(h => [...h, { cursor: last.nextCursor, nextCursor: r.nextCursor, filters, rows: r.rows, hasMore: r.hasMore }]);
       })
-      .catch(e => setError(e.message ?? String(e)))
-      .finally(() => setLoading(false));
+      .catch(e => { if (reqId === reqIdRef.current) setError(e.message ?? String(e)); })
+      .finally(() => { if (reqId === reqIdRef.current) setLoading(false); });
   }
 
   function loadPrev() {
@@ -72,12 +81,17 @@ export function RequestLogsPanel({ keyId, lang }: { keyId: string; lang: Lang })
   }
 
   function refresh() {
+    if (loading) return;
+    const reqId = ++reqIdRef.current;
     setLoading(true);
     setError('');
     api<UsageEventsLogResponse>(`/api/keys/${encodeURIComponent(keyId)}/usage-events?${buildLogsQuery(filters, null)}`)
-      .then(r => setHistory([{ cursor: null, nextCursor: r.nextCursor, filters, rows: r.rows, hasMore: r.hasMore }]))
-      .catch(e => setError(e.message ?? String(e)))
-      .finally(() => setLoading(false));
+      .then(r => {
+        if (reqId !== reqIdRef.current) return;
+        setHistory([{ cursor: null, nextCursor: r.nextCursor, filters, rows: r.rows, hasMore: r.hasMore }]);
+      })
+      .catch(e => { if (reqId === reqIdRef.current) setError(e.message ?? String(e)); })
+      .finally(() => { if (reqId === reqIdRef.current) setLoading(false); });
   }
 
   function onPreset(preset: LogsRangePreset) {
@@ -103,16 +117,16 @@ export function RequestLogsPanel({ keyId, lang }: { keyId: string; lang: Lang })
           <span>{t.from}</span>
           <input
             type="datetime-local"
-            value={toVnLocal(filters.fromIso)}
-            onChange={e => setFilters(f => ({ ...f, fromIso: fromVnLocalToIso(e.target.value) }))}
+            value={toVnInput(filters.fromIso)}
+            onChange={e => setFilters(f => ({ ...f, fromIso: fromVnInput(e.target.value) ?? '' }))}
           />
         </label>
         <label>
           <span>{t.to}</span>
           <input
             type="datetime-local"
-            value={toVnLocal(filters.toIso)}
-            onChange={e => setFilters(f => ({ ...f, toIso: fromVnLocalToIso(e.target.value) }))}
+            value={toVnInput(filters.toIso)}
+            onChange={e => setFilters(f => ({ ...f, toIso: fromVnInput(e.target.value) ?? '' }))}
           />
         </label>
       </>}
@@ -135,7 +149,15 @@ export function RequestLogsPanel({ keyId, lang }: { keyId: string; lang: Lang })
       </label>
       <label>
         <span>{t.provider}</span>
-        <input type="text" value={filters.provider} onChange={e => setFilters(f => ({ ...f, provider: e.target.value }))} />
+        <input
+          type="text"
+          value={filters.provider}
+          onChange={e => setFilters(f => ({ ...f, provider: e.target.value }))}
+          // Provider input would otherwise refetch on every keystroke. We commit
+          // the filter locally but only trigger the actual fetch on blur/Enter.
+          onBlur={() => setFilters(f => ({ ...f }))}
+          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        />
       </label>
       <label>
         <span>{t.pageSize}</span>
@@ -185,18 +207,4 @@ function LogRow({ row }: { row: UsageEventLogRow }) {
     <td>{formatCost(row.cost)}</td>
     <td>{row.provider ?? '—'}{row.connectionId ? ` · ${row.connectionId}` : ''}</td>
   </tr>;
-}
-
-// Local datetime helpers (Vietnam time, matching format.ts).
-const PAD_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
-function parseUtcTimestamp(value: string) {
-  return new Date(PAD_RE.test(value) ? `${value.replace(' ', 'T')}Z` : value);
-}
-function toVnLocal(utc?: string | null) {
-  if (!utc) return '';
-  return new Date(parseUtcTimestamp(utc).getTime() + 7 * 60 * 60 * 1000).toISOString().slice(0, 16);
-}
-function fromVnLocalToIso(v: string) {
-  if (!v) return '';
-  return new Date(new Date(`${v}:00.000Z`).getTime() - 7 * 60 * 60 * 1000).toISOString();
 }
