@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createServerApp, type ServerAppOptions } from './app.js';
+import { ingestUsageHistory } from './services/usageStore.js';
+import type { UsageRecord } from '../shared/types.js';
 
 const apps: FastifyInstance[] = [];
 const tempDirs: string[] = [];
@@ -437,6 +439,146 @@ describe('server app routes', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].model).toBe('super/claude-opus-4.8');
     expect(calls[0].url).toMatch(/\/v1\/chat\/completions$/);
+  });
+
+  describe('/api/keys/:keyId/usage-events', () => {
+    function seedEvents(dbPath: string, apiKey: string, count = 3, start = '2026-07-10T00:00:00.000Z', extra: Record<string, unknown> = {}) {
+      const d = new Database(dbPath);
+      try {
+        const rows = Array.from({ length: count }, (_, i) => ({
+          apiKey,
+          model: extra.model ?? 'gpt-5.5',
+          provider: extra.provider ?? 'prov',
+          connectionId: `conn-${i}`,
+          timestamp: new Date(Date.parse(start) + i * 60_000).toISOString(),
+          cost: 0.001 * (i + 1),
+          tokens: {
+            prompt_tokens: 10 + i,
+            completion_tokens: 5 + i,
+            total_tokens: 15 + 2 * i,
+            cache_read_input_tokens: extra.cacheRead ?? 0,
+            cache_creation_input_tokens: extra.cacheWrite ?? 0,
+          },
+        }));
+        ingestUsageHistory(d, rows as unknown as UsageRecord[]);
+      } finally { d.close(); }
+    }
+
+    it('requires authentication', async () => {
+      const key = { id: 'log-key', name: 'Log', key: 'sk-log', isActive: true };
+      const { instance: server } = await app({ readApiKeys: () => [key] });
+
+      const res = await server.inject({ method: 'GET', url: `/api/keys/${key.id}/usage-events` });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('returns rows in DESC order with cache columns', async () => {
+      const key = { id: 'log-key', name: 'Log', key: 'sk-log', isActive: true };
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key] });
+      seedEvents(dbPath, key.key, 3, '2026-07-10T00:00:00.000Z', { cacheRead: 4, cacheWrite: 2 });
+      const cookie = await adminCookie(server);
+
+      const res = await server.inject({
+        method: 'GET',
+        url: `/api/keys/${key.id}/usage-events?from=2026-07-01T00:00:00.000Z&to=2026-08-01T00:00:00.000Z`,
+        headers: { cookie },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as { rows: Array<{ timestamp: string; cacheReadTokens: number | null; cacheCreationTokens: number | null }>; hasMore: boolean; nextCursor: string | null };
+      expect(body.rows).toHaveLength(3);
+      expect(body.rows[0].timestamp > body.rows[1].timestamp).toBe(true);
+      expect(body.rows[0].cacheReadTokens).toBe(4);
+      expect(body.rows[0].cacheCreationTokens).toBe(2);
+      expect(body.hasMore).toBe(false);
+      expect(body.nextCursor).toBeNull();
+    });
+
+    it('paginates and accepts a cursor', async () => {
+      const key = { id: 'log-key', name: 'Log', key: 'sk-log', isActive: true };
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key] });
+      seedEvents(dbPath, key.key, 60, '2026-07-10T00:00:00.000Z');
+      const cookie = await adminCookie(server);
+
+      const first = await server.inject({
+        method: 'GET',
+        url: `/api/keys/${key.id}/usage-events?from=2026-07-01T00:00:00.000Z&to=2026-08-01T00:00:00.000Z&pageSize=50`,
+        headers: { cookie },
+      });
+      const firstBody = first.json() as { rows: Array<{ id: number }>; hasMore: boolean; nextCursor: string | null };
+      expect(firstBody.rows).toHaveLength(50);
+      expect(firstBody.hasMore).toBe(true);
+      expect(firstBody.nextCursor).not.toBeNull();
+
+      const second = await server.inject({
+        method: 'GET',
+        url: `/api/keys/${key.id}/usage-events?from=2026-07-01T00:00:00.000Z&to=2026-08-01T00:00:00.000Z&pageSize=50&cursor=${encodeURIComponent(firstBody.nextCursor!)}`,
+        headers: { cookie },
+      });
+      const secondBody = second.json() as { rows: Array<{ id: number }>; hasMore: boolean };
+      const ids = [...firstBody.rows, ...secondBody.rows].map(r => r.id);
+      expect(new Set(ids).size).toBe(60);
+      expect(secondBody.hasMore).toBe(false);
+    });
+
+    it('rejects invalid pageSize with 400', async () => {
+      const key = { id: 'log-key', name: 'Log', key: 'sk-log', isActive: true };
+      const { instance: server } = await app({ readApiKeys: () => [key] });
+      const cookie = await adminCookie(server);
+
+      const res = await server.inject({
+        method: 'GET',
+        url: `/api/keys/${key.id}/usage-events?pageSize=999`,
+        headers: { cookie },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects invalid cursor with 400', async () => {
+      const key = { id: 'log-key', name: 'Log', key: 'sk-log', isActive: true };
+      const { instance: server } = await app({ readApiKeys: () => [key] });
+      const cookie = await adminCookie(server);
+
+      const res = await server.inject({
+        method: 'GET',
+        url: `/api/keys/${key.id}/usage-events?cursor=not-a-cursor`,
+        headers: { cookie },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('404s on unknown keyId', async () => {
+      const { instance: server } = await app({ readApiKeys: () => [] });
+      const cookie = await adminCookie(server);
+
+      const res = await server.inject({
+        method: 'GET',
+        url: '/api/keys/no-such-key/usage-events',
+        headers: { cookie },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns distinct models', async () => {
+      const key = { id: 'log-key', name: 'Log', key: 'sk-log', isActive: true };
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key] });
+      const d = new Database(dbPath);
+      try {
+        ingestUsageHistory(d, [
+          { apiKey: key.key, model: 'alpha', timestamp: '2026-07-10T00:00:00.000Z', tokens: { total_tokens: 1 } },
+          { apiKey: key.key, model: 'beta', timestamp: '2026-07-11T00:00:00.000Z', tokens: { total_tokens: 1 } },
+          { apiKey: key.key, model: 'alpha', timestamp: '2026-07-12T00:00:00.000Z', tokens: { total_tokens: 1 } },
+        ]);
+      } finally { d.close(); }
+      const cookie = await adminCookie(server);
+
+      const res = await server.inject({
+        method: 'GET',
+        url: `/api/keys/${key.id}/usage-events/models?from=2026-07-01T00:00:00.000Z&to=2026-08-01T00:00:00.000Z`,
+        headers: { cookie },
+      });
+      expect(res.statusCode).toBe(200);
+      expect((res.json() as string[]).sort()).toEqual(['alpha', 'beta']);
+    });
   });
 
 });
