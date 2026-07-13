@@ -6,6 +6,13 @@ import { buildConfigStatus } from '../configStatus.js';
 import { getModelRewriteConfig, saveModelRewriteConfig } from '../services/modelRewrite.js';
 import { runWatcherOnce } from '../services/watcher.js';
 import { nineRouterLogMetrics } from '../services/nineRouterLogMetrics.js';
+import {
+  defaultRange,
+  distinctModelsForKey,
+  encodeCursor,
+  listUsageEventsForKey,
+  parseCursor,
+} from '../services/usageEventsList.js';
 
 const PolicyPatch = z.object({
   tokenLimit: z.number().int().positive().nullable().optional(),
@@ -34,6 +41,7 @@ export type AdminRouteOptions = {
   db: Database.Database;
   requireAuth: AuthHook;
   usageResponse: () => unknown;
+  lookupApiKeyById: (keyId: string) => string | null;
   finalFallbackStore: {
     get: () => FinalFallbackConfig;
     save: (config: FinalFallbackConfig) => FinalFallbackConfig;
@@ -81,6 +89,7 @@ export async function registerAdminRoutes(app: FastifyInstance, options: AdminRo
     db,
     requireAuth,
     usageResponse,
+    lookupApiKeyById,
     finalFallbackStore,
     modelRateLimitStore,
     modelRateLimiter,
@@ -97,6 +106,63 @@ export async function registerAdminRoutes(app: FastifyInstance, options: AdminRo
     protectedRoutes.addHook('preHandler', requireAuth as any);
     protectedRoutes.get('/api/config/status', async () => buildConfigStatus());
     protectedRoutes.get('/api/keys/usage', async () => usageResponse());
+    const UsageEventsQuery = z.object({
+      from: z.string().datetime({ offset: true }).optional(),
+      to: z.string().datetime({ offset: true }).optional(),
+      model: z.string().min(1).optional(),
+      provider: z.string().min(1).optional(),
+      cache: z.enum(['any', 'read', 'write', 'none']).optional(),
+      cursor: z.string().min(1).optional(),
+      pageSize: z.coerce.number().int().optional(),
+    });
+    protectedRoutes.get('/api/keys/:keyId/usage-events', async (req, reply) => {
+      const { keyId } = req.params as { keyId: string };
+      const apiKey = lookupApiKeyById(keyId);
+      if (!apiKey) return reply.code(404).send({ error: 'key not found' });
+      const parsed = UsageEventsQuery.safeParse(req.query);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid query', details: parsed.error.flatten() });
+      const q = parsed.data;
+      if (q.pageSize !== undefined && q.pageSize !== 50 && q.pageSize !== 100 && q.pageSize !== 200) {
+        return reply.code(400).send({ error: 'pageSize must be 50, 100, or 200' });
+      }
+      const range = defaultRange();
+      const fromIso = q.from ?? range.fromIso;
+      const toIso = q.to ?? range.toIso;
+      if (Date.parse(fromIso) > Date.parse(toIso)) return reply.code(400).send({ error: 'from must be <= to' });
+      let cursor = null as ReturnType<typeof parseCursor>;
+      if (q.cursor) {
+        cursor = parseCursor(q.cursor);
+        if (!cursor) return reply.code(400).send({ error: 'invalid cursor' });
+      }
+      const page = listUsageEventsForKey(db, {
+        apiKey,
+        fromIso,
+        toIso,
+        model: q.model ?? null,
+        provider: q.provider ?? null,
+        cache: q.cache ?? 'any',
+        cursor,
+        pageSize: (q.pageSize as 50 | 100 | 200 | undefined) ?? 50,
+      });
+      return {
+        rows: page.rows,
+        nextCursor: page.nextCursor ? encodeCursor(page.nextCursor) : null,
+        hasMore: page.hasMore,
+      };
+    });
+    protectedRoutes.get('/api/keys/:keyId/usage-events/models', async (req, reply) => {
+      const { keyId } = req.params as { keyId: string };
+      const apiKey = lookupApiKeyById(keyId);
+      if (!apiKey) return reply.code(404).send({ error: 'key not found' });
+      const parsed = UsageEventsQuery.pick({ from: true, to: true }).safeParse(req.query);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalid query', details: parsed.error.flatten() });
+      const range = defaultRange();
+      return distinctModelsForKey(db, {
+        apiKey,
+        fromIso: parsed.data.from ?? range.fromIso,
+        toIso: parsed.data.to ?? range.toIso,
+      });
+    });
     protectedRoutes.get('/api/traffic/summary', async () => nineRouterLogMetrics.summary());
     protectedRoutes.get('/api/model-rewrite/config', async () => getModelRewriteConfig(db));
     protectedRoutes.put('/api/model-rewrite/config', async (req) => saveModelRewriteConfig(db, ModelRewriteConfigBody.parse(req.body)));

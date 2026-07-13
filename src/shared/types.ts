@@ -207,3 +207,23 @@ export type TrafficSummary = {
   buckets: TrafficSummaryBucket[];
   models: TrafficModelSummary[];
 };
+
+export type UsageEventLogRow = {
+  id: number;
+  timestamp: string;
+  model: string | null;
+  provider: string | null;
+  connectionId: string | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+  cost: number | null;
+};
+
+export type UsageEventsLogResponse = {
+  rows: UsageEventLogRow[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};

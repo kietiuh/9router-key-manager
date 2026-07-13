@@ -168,6 +168,7 @@ await registerAdminRoutes(app, {
   db,
   requireAuth,
   usageResponse,
+  lookupApiKeyById: (keyId: string) => apiKeyCache.getKeys().find(k => k.id === keyId)?.key ?? null,
   finalFallbackStore,
   modelRateLimitStore,
   modelRateLimiter,
