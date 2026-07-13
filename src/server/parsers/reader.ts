@@ -24,6 +24,9 @@ const UsageRecordSchema = z.object({
     completion_tokens: z.number().optional(),
     total_tokens: z.number().optional(),
     cache_read_input_tokens: z.number().optional(),
+    // 9router writes the field as `cached_tokens`; allow it through so parseTokens
+    // can map it onto cache_read_input_tokens.
+    cached_tokens: z.number().optional(),
     cache_creation_input_tokens: z.number().optional(),
     reasoning_tokens: z.number().optional()
   }).optional()
@@ -51,7 +54,7 @@ function readSqliteApiKeys(pathname: string): ApiKeyRecord[] | null {
   } catch { return null; }
 }
 
-function parseTokens(raw: unknown, promptTokens?: number, completionTokens?: number): UsageRecord['tokens'] {
+export function parseTokens(raw: unknown, promptTokens?: number, completionTokens?: number): UsageRecord['tokens'] {
   let parsed: any = {};
   if (typeof raw === 'string' && raw.trim()) {
     try { parsed = JSON.parse(raw); } catch { parsed = {}; }
@@ -59,11 +62,15 @@ function parseTokens(raw: unknown, promptTokens?: number, completionTokens?: num
   const prompt = Number(parsed.prompt_tokens ?? promptTokens ?? 0);
   const completion = Number(parsed.completion_tokens ?? completionTokens ?? 0);
   const total = parsed.total_tokens == null ? undefined : Number(parsed.total_tokens);
+  // 9router writes the field as `cached_tokens`; some sources use Anthropic's
+  // `cache_read_input_tokens`. Either name should populate the canonical column.
+  const readRaw = parsed.cache_read_input_tokens ?? parsed.cached_tokens;
+  const readTokens = readRaw == null ? undefined : Number(readRaw);
   return {
     prompt_tokens: Number.isFinite(prompt) ? prompt : 0,
     completion_tokens: Number.isFinite(completion) ? completion : 0,
     total_tokens: total !== undefined && Number.isFinite(total) ? total : undefined,
-    cache_read_input_tokens: parsed.cache_read_input_tokens == null ? undefined : Number(parsed.cache_read_input_tokens),
+    cache_read_input_tokens: readTokens !== undefined && Number.isFinite(readTokens) ? readTokens : undefined,
     cache_creation_input_tokens: parsed.cache_creation_input_tokens == null ? undefined : Number(parsed.cache_creation_input_tokens),
     reasoning_tokens: parsed.reasoning_tokens == null ? undefined : Number(parsed.reasoning_tokens)
   };
