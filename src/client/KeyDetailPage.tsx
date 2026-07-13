@@ -3,6 +3,7 @@ import type { KeyUsageSummary } from '../shared/types';
 import { api } from './api';
 import { fmt, pct, vnDateTime } from './format';
 import { dict, statusLabel, type Lang } from './i18n';
+import { RequestLogsPanel } from './RequestLogsPanel';
 import { buildModelUsageRows, findKeyById } from './keyDetail';
 
 export function KeyDetailPage({ keyId, lang, onBack }: { keyId: string; lang: Lang; onBack: () => void }) {
@@ -44,6 +45,7 @@ export function KeyDetailPage({ keyId, lang, onBack }: { keyId: string; lang: La
         <thead><tr><th>{t.modelName}</th><th>{t.req}</th><th>{t.inputTokens}</th><th>{t.outputTokens}</th><th>{t.totalTokens}</th><th>{t.share}</th><th>{t.last}</th></tr></thead>
         <tbody>{rows.map(r => <tr key={r.model}><td><code>{r.model}</code></td><td>{fmt(r.req)}</td><td>{fmt(r.prompt)}</td><td>{fmt(r.completion)}</td><td>{fmt(r.total)}</td><td><div className="meter"><div style={{ width: `${Math.min(r.percentOfTotal, 100)}%` }} /></div>{pct(r.percentOfTotal)}</td><td>{vnDateTime(r.lastUsageAt)}</td></tr>)}</tbody>
       </table></section>}
+      <RequestLogsPanel keyId={keyId} lang={lang} />
     </>}
   </main>;
 }
