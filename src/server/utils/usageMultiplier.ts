@@ -15,10 +15,14 @@ const FLAT_TOKEN_FIELDS = [
   'output_tokens',
 ] as const;
 
-// OpenAI-style nested token details inside `usage`.
+// OpenAI-style nested token details inside `usage`. Both chat/completions
+// (prompt_/completion_tokens_details) and the newer Responses API
+// (input_/output_tokens_details) use the same shape, so we scale both.
 const NESTED_TOKEN_FIELDS = [
   { parent: 'prompt_tokens_details', child: 'cached_tokens' },
   { parent: 'completion_tokens_details', child: 'reasoning_tokens' },
+  { parent: 'input_tokens_details', child: 'cached_tokens' },
+  { parent: 'output_tokens_details', child: 'reasoning_tokens' },
 ] as const;
 
 function scaleValue(value: unknown, factor: number): number | undefined {
@@ -32,6 +36,11 @@ function scaleValue(value: unknown, factor: number): number | undefined {
  * call multiple times (idempotent because we always overwrite the same field).
  *
  * Skips non-object input and non-numeric / non-finite field values.
+ *
+ * Covers:
+ *   - OpenAI chat/completions flat + nested details
+ *   - OpenAI Responses API (/v1/responses) flat + nested details
+ *   - Anthropic Messages API flat fields
  */
 export function applyUsageMultiplierToUsage(usage: unknown, factor: number): unknown {
   if (!usage || typeof usage !== 'object') return usage;
@@ -161,6 +170,12 @@ export function createUsageScalingSseTransform(factor: number): Transform {
       }
       if (parsed.message && typeof parsed.message === 'object' && parsed.message.usage && typeof parsed.message.usage === 'object') {
         applyUsageMultiplierToUsage(parsed.message.usage, factor);
+        mutated = true;
+      }
+      // OpenAI Responses API streaming events: usage lives under
+      // `event.response.usage` (e.g. response.completed).
+      if (parsed.response && typeof parsed.response === 'object' && parsed.response.usage && typeof parsed.response.usage === 'object') {
+        applyUsageMultiplierToUsage(parsed.response.usage, factor);
         mutated = true;
       }
     }

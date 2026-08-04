@@ -265,6 +265,11 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
                 applyUsageMultiplierToUsage(parsed.message.usage, usageFactor);
                 mutated = true;
               }
+              // OpenAI Responses API: usage lives under `response.usage`.
+              if (parsed.response && typeof parsed.response === 'object' && parsed.response.usage && typeof parsed.response.usage === 'object') {
+                applyUsageMultiplierToUsage(parsed.response.usage, usageFactor);
+                mutated = true;
+              }
             }
             if (!mutated) {
               reply.removeHeader('content-length');
