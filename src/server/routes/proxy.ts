@@ -15,6 +15,7 @@ import type { ModelRateLimiter, ModelRateLimitLease } from '../services/modelRat
 import { buildTrafficLogMeta } from '../services/trafficLog.js';
 import { timeoutForModel, type UpstreamTimeoutConfig } from '../services/upstreamTimeouts.js';
 import type { ApiKeyLookupResult } from '../services/apiKeyCache.js';
+import { applyUsageMultiplierToUsage, createUsageScalingSseTransform, resolveMultiplierForKey } from '../utils/usageMultiplier.js';
 
 export type ProxyRouteOptions = {
   db: Database.Database;
@@ -121,6 +122,7 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
       const clientToken = extractBearerToken(req.headers.authorization);
       const clientKey = clientToken ? lookupKey(clientToken) : undefined;
       const allowFinalFallback = readAllowFinalFallback(db, clientKey?.id);
+      const nowIso = new Date().toISOString();
       const clientLimitKey = clientToken ? clientRateLimitKey(clientToken, clientKey) : undefined;
       let clientLease: ClientRateLimitLease | undefined;
       let clientLeaseReleased = false;
@@ -205,10 +207,129 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
         reply.header('x-rate-queue-time-ms', String(result.rateQueuedMs));
         reply.header('x-upstream-time-ms', String(result.upstreamMs));
         reply.code(result.upstream.status);
+        // Decide whether we need to scale token fields in the response body.
+        // factor === 1 (the common case) means we skip the entire transform pipeline.
+        let usageFactor = 1;
+        if (clientKey?.id) {
+          try {
+            usageFactor = resolveMultiplierForKey(db, clientKey.id, nowIso).factor;
+          } catch (err: any) {
+            req.log.warn({ keyId: clientKey.id, error: err?.message }, 'failed to resolve usage multiplier; pass-through');
+          }
+        }
+        // For JSON bodies we must drop upstream `content-length` after scaling, so we
+        // collect skipped headers dynamically. For other content types pass-through is
+        // byte-exact so we keep the original skip list.
+        const skipHeaders = new Set(['connection', 'content-encoding', 'transfer-encoding']);
         result.upstream.headers.forEach((value, key) => {
-          if (!['connection', 'content-encoding', 'transfer-encoding'].includes(key.toLowerCase())) reply.header(key, value);
+          if (skipHeaders.has(key.toLowerCase())) return;
+          reply.header(key, value);
         });
         if (!result.upstream.body) return reply.send();
+        const upstreamContentType = (result.upstream.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+        const canScaleJson = usageFactor !== 1 && upstreamContentType === 'application/json';
+        const canScaleSse = usageFactor !== 1 && upstreamContentType === 'text/event-stream';
+
+        if (canScaleJson) {
+          req.log.debug({ keyId: clientKey?.id, factor: usageFactor, contentType: upstreamContentType }, 'scaling upstream usage by multiplier');
+          try {
+            const chunks: Buffer[] = [];
+            let totalBytes = 0;
+            const jsonBodyLimit = 50 * 1024 * 1024;
+            for await (const chunk of result.upstream.body as any) {
+              const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+              totalBytes += buf.length;
+              if (totalBytes > jsonBodyLimit) {
+                req.log.warn({ keyId: clientKey?.id, totalBytes }, 'json response exceeded limit; pass-through');
+                const raw = Buffer.concat(chunks);
+                chunks.length = 0;
+                // Drop stale content-length since we may have truncated.
+                reply.removeHeader('content-length');
+                releaseOnFinally = false;
+                releaseClientOnFinally = false;
+                result.lease?.release();
+                releaseClientLease();
+                return reply.send(raw);
+              }
+              chunks.push(buf);
+            }
+            const body = Buffer.concat(chunks);
+            const parsed = JSON.parse(body.toString('utf-8'));
+            let mutated = false;
+            if (parsed && typeof parsed === 'object') {
+              if (parsed.usage && typeof parsed.usage === 'object') {
+                applyUsageMultiplierToUsage(parsed.usage, usageFactor);
+                mutated = true;
+              }
+              if (parsed.message && typeof parsed.message === 'object' && parsed.message.usage && typeof parsed.message.usage === 'object') {
+                applyUsageMultiplierToUsage(parsed.message.usage, usageFactor);
+                mutated = true;
+              }
+            }
+            if (!mutated) {
+              reply.removeHeader('content-length');
+              releaseOnFinally = false;
+              releaseClientOnFinally = false;
+              result.lease?.release();
+              releaseClientLease();
+              return reply.send(body);
+            }
+            const out = Buffer.from(JSON.stringify(parsed), 'utf-8');
+            // Length changed; upstream content-length no longer applies.
+            reply.removeHeader('content-length');
+            releaseOnFinally = false;
+            releaseClientOnFinally = false;
+            result.lease?.release();
+            releaseClientLease();
+            return reply.send(out);
+          } catch (err: any) {
+            req.log.warn({ keyId: clientKey?.id, error: err?.message }, 'failed to scale upstream json usage; pass-through');
+            // Fall through to default pass-through below (result.upstream.body already consumed;
+            // the default branch is unsafe, so consume+cancel and emit an empty body).
+            try { await result.upstream.body?.cancel(); } catch { /* ignore */ }
+            releaseOnFinally = false;
+            releaseClientOnFinally = false;
+            result.lease?.release();
+            releaseClientLease();
+            reply.removeHeader('content-length');
+            return reply.send();
+          }
+        }
+
+        if (canScaleSse) {
+          req.log.debug({ keyId: clientKey?.id, factor: usageFactor, contentType: upstreamContentType }, 'scaling upstream usage by multiplier (sse)');
+          const transform = createUsageScalingSseTransform(usageFactor);
+          const source = Readable.fromWeb(result.upstream.body as any);
+          source.on('error', (err: Error) => {
+            req.log.warn({ keyId: clientKey?.id, error: err.message }, 'upstream body stream error');
+            transform.destroy(err);
+          });
+          source.pipe(transform);
+          const stream = transform;
+          const streamLease = result.lease;
+          releaseOnFinally = false;
+          releaseClientOnFinally = false;
+          let streamLeaseReleased = false;
+          const releaseStreamLease = () => {
+            if (streamLeaseReleased) return;
+            streamLeaseReleased = true;
+            // Cancel the upstream source so the Web ReadableStream is drained and
+            // the upstream TCP connection can be reused.
+            try { source.destroy(); } catch { /* ignore */ }
+            streamLease.release();
+            releaseClientLease();
+          };
+          stream.once('close', releaseStreamLease);
+          stream.once('error', releaseStreamLease);
+          stream.once('end', releaseStreamLease);
+          try {
+            return reply.send(stream);
+          } catch (sendErr) {
+            releaseStreamLease();
+            throw sendErr;
+          }
+        }
+
         const stream = Readable.fromWeb(result.upstream.body as any);
         const streamLease = result.lease;
         releaseOnFinally = false;
@@ -217,6 +338,9 @@ export async function registerProxyRoutes(app: FastifyInstance, options: ProxyRo
         const releaseStreamLease = () => {
           if (streamLeaseReleased) return;
           streamLeaseReleased = true;
+          // Cancel the upstream source so the Web ReadableStream is drained and
+          // the upstream TCP connection can be reused.
+          try { stream.destroy(); } catch { /* ignore */ }
           streamLease.release();
           releaseClientLease();
         };

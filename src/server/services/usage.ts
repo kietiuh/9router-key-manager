@@ -36,7 +36,7 @@ function betterUsageRecord(a: UsageRecord, b: UsageRecord): UsageRecord {
 }
 
 
-function multiplierAt(timestamp: string, events: Array<{ multiplier: number; effective_at: string }>): number {
+export function multiplierAt(timestamp: string, events: Array<{ multiplier: number; effective_at: string }>): number {
   let factor = 1;
   for (const event of events) {
     if (event.effective_at <= timestamp) factor = Math.max(0, event.multiplier);
@@ -100,20 +100,32 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
       }
     }
     let req = 0, prompt = 0, completion = 0, total = 0, actualPrompt = 0, actualCompletion = 0, actualTotal = 0, cost = 0;
+    let cacheRead = 0, cacheCreation = 0, reasoning = 0;
+    let actualCacheRead = 0, actualCacheCreation = 0, actualReasoning = 0;
     let firstUsageAt: string | null = null, lastUsageAt: string | null = null;
     for (const r of deduped.values()) {
       const factor = multiplierAt(r.timestamp, multiplierEvents);
       const rawPrompt = r.tokens?.prompt_tokens ?? 0;
       const rawCompletion = r.tokens?.completion_tokens ?? 0;
       const rawTotal = tokenTotal(r);
+      const rawCacheRead = r.tokens?.cache_read_input_tokens ?? 0;
+      const rawCacheCreation = r.tokens?.cache_creation_input_tokens ?? 0;
+      const rawReasoning = r.tokens?.reasoning_tokens ?? 0;
       const adjPrompt = Math.round(rawPrompt * factor);
       const adjCompletion = Math.round(rawCompletion * factor);
       const adjTotal = r.tokens?.total_tokens != null ? Math.round(rawTotal * factor) : adjPrompt + adjCompletion;
+      const adjCacheRead = Math.round(rawCacheRead * factor);
+      const adjCacheCreation = Math.round(rawCacheCreation * factor);
+      const adjReasoning = Math.round(rawReasoning * factor);
       req++;
       actualPrompt += rawPrompt; actualCompletion += rawCompletion; actualTotal += rawTotal;
+      actualCacheRead += rawCacheRead; actualCacheCreation += rawCacheCreation; actualReasoning += rawReasoning;
       prompt += adjPrompt;
       completion += adjCompletion;
       total += adjTotal;
+      cacheRead += adjCacheRead;
+      cacheCreation += adjCacheCreation;
+      reasoning += adjReasoning;
       cost += (r.cost ?? 0) * factor;
       if (!firstUsageAt || r.timestamp < firstUsageAt) firstUsageAt = r.timestamp;
       if (!lastUsageAt || r.timestamp > lastUsageAt) lastUsageAt = r.timestamp;
@@ -161,8 +173,10 @@ export function summarizeKeyUsage(keys: ApiKeyRecord[], usage: UsageRecord[], po
       usageMultiplier: multiplier,
       usageMultiplierEffectiveAt: multiplierEffectiveAt,
       actualPrompt, actualCompletion, actualTotal,
+      actualCacheRead, actualCacheCreation, actualReasoning,
       dedupedRequests: req, duplicateRequests, duplicateTokens,
-      req, prompt, completion, total, cost,
+      req, prompt, completion, total,
+      cacheRead, cacheCreation, reasoning, cost,
       percentOfLimit: percent,
       firstUsageAt, lastUsageAt,
       models: Object.fromEntries([...models.entries()].sort((a,b)=>b[1]-a[1])),

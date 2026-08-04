@@ -581,4 +581,222 @@ describe('server app routes', () => {
     });
   });
 
+  describe('proxy usage multiplier scaling', () => {
+    it('scales JSON usage fields when multiplier != 1', async () => {
+      const key = { id: 'k-scale', name: 'K', key: 'sk-scale', isActive: true };
+      const fetchImpl = async () => new Response(
+        JSON.stringify({ id: 'cmpl-1', choices: [], usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150, cache_read_input_tokens: 80, reasoning_tokens: 12 } }),
+        { status: 200, headers: { 'content-type': 'application/json', 'content-length': '999' } }
+      );
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key], fetchImpl });
+      const d = new Database(dbPath);
+      d.prepare('INSERT INTO key_policies (key_id, name, window_start, reset_policy, usage_multiplier, usage_multiplier_effective_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+        key.id, 'K', '1970-01-01T00:00:00.000Z', 'daily', 2, '2026-01-01T00:00:00.000Z'
+      );
+      d.close();
+
+      const res = await server.inject({
+        method: 'POST', url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+        payload: { model: 'm', messages: [] },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.usage.prompt_tokens).toBe(200);
+      expect(body.usage.completion_tokens).toBe(100);
+      expect(body.usage.total_tokens).toBe(300);
+      expect(body.usage.cache_read_input_tokens).toBe(160);
+      expect(body.usage.reasoning_tokens).toBe(24);
+    });
+
+    it('passes through JSON body unchanged when multiplier is 1', async () => {
+      const key = { id: 'k-one', name: 'K', key: 'sk-one', isActive: true };
+      const original = { id: 'cmpl-1', choices: [], usage: { prompt_tokens: 100, completion_tokens: 50 } };
+      const fetchImpl = async () => new Response(JSON.stringify(original), { status: 200, headers: { 'content-type': 'application/json' } });
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key], fetchImpl });
+      const d = new Database(dbPath);
+      d.prepare('INSERT INTO key_policies (key_id, name, window_start, reset_policy, usage_multiplier, usage_multiplier_effective_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+        key.id, 'K', '1970-01-01T00:00:00.000Z', 'daily', 1, '2026-01-01T00:00:00.000Z'
+      );
+      d.close();
+
+      const res = await server.inject({
+        method: 'POST', url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+        payload: { model: 'm', messages: [] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual(original);
+    });
+
+    it('passes through JSON body unchanged when multiplier is 0 (no-op)', async () => {
+      const key = { id: 'k-zero', name: 'K', key: 'sk-zero', isActive: true };
+      const original = { usage: { prompt_tokens: 100, completion_tokens: 50 } };
+      const fetchImpl = async () => new Response(JSON.stringify(original), { status: 200, headers: { 'content-type': 'application/json' } });
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key], fetchImpl });
+      const d = new Database(dbPath);
+      d.prepare('INSERT INTO key_policies (key_id, name, window_start, reset_policy, usage_multiplier, usage_multiplier_effective_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+        key.id, 'K', '1970-01-01T00:00:00.000Z', 'daily', 0, '2026-01-01T00:00:00.000Z'
+      );
+      d.close();
+
+      const res = await server.inject({
+        method: 'POST', url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+        payload: { model: 'm', messages: [] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual(original);
+    });
+
+    it('passes through JSON body without usage field unchanged', async () => {
+      const key = { id: 'k-nou', name: 'K', key: 'sk-nou', isActive: true };
+      const original = { id: 'cmpl-1', ok: true };
+      const fetchImpl = async () => new Response(JSON.stringify(original), { status: 200, headers: { 'content-type': 'application/json' } });
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key], fetchImpl });
+      const d = new Database(dbPath);
+      d.prepare('INSERT INTO key_policies (key_id, name, window_start, reset_policy, usage_multiplier, usage_multiplier_effective_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+        key.id, 'K', '1970-01-01T00:00:00.000Z', 'daily', 2, '2026-01-01T00:00:00.000Z'
+      );
+      d.close();
+
+      const res = await server.inject({
+        method: 'POST', url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+        payload: { model: 'm', messages: [] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual(original);
+    });
+
+    it('passes through JSON body unchanged when bearer token is unknown (no clientKey)', async () => {
+      const original = { usage: { prompt_tokens: 100, completion_tokens: 50 } };
+      const { instance: server } = await app({
+        fetchImpl: async () => new Response(JSON.stringify(original), { status: 200, headers: { 'content-type': 'application/json' } }),
+      });
+
+      const res = await server.inject({
+        method: 'POST', url: '/v1/chat/completions',
+        headers: { authorization: 'Bearer sk-unknown', 'content-type': 'application/json' },
+        payload: { model: 'm', messages: [] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual(original);
+    });
+
+    it('passes through SSE body and scales the usage chunk', async () => {
+      const key = { id: 'k-sse', name: 'K', key: 'sk-sse', isActive: true };
+      const upstreamBody =
+        `data: {"id":"1","choices":[{"delta":{"content":"hi"}}]}\n\n` +
+        `data: {"id":"1","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50}}\n\n` +
+        `data: [DONE]\n\n`;
+      const fetchImpl = async () => new Response(upstreamBody, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key], fetchImpl });
+      const d = new Database(dbPath);
+      d.prepare('INSERT INTO key_policies (key_id, name, window_start, reset_policy, usage_multiplier, usage_multiplier_effective_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+        key.id, 'K', '1970-01-01T00:00:00.000Z', 'daily', 2, '2026-01-01T00:00:00.000Z'
+      );
+      d.close();
+
+      const res = await server.inject({
+        method: 'POST', url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+        payload: { model: 'm', messages: [] },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.body;
+      expect(body).toContain('"id":"1"');
+      expect(body).toContain('"content":"hi"');
+      expect(body).toContain('"prompt_tokens":200');
+      expect(body).toContain('"completion_tokens":100');
+      expect(body).toContain('data: [DONE]\n\n');
+    });
+
+    it('passes through non-JSON/non-SSE content types byte-for-byte', async () => {
+      const key = { id: 'k-audio', name: 'K', key: 'sk-audio', isActive: true };
+      const audio = Buffer.from('binary-audio-bytes');
+      const fetchImpl = async () => new Response(audio, { status: 200, headers: { 'content-type': 'audio/mpeg' } });
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key], fetchImpl });
+      const d = new Database(dbPath);
+      d.prepare('INSERT INTO key_policies (key_id, name, window_start, reset_policy, usage_multiplier, usage_multiplier_effective_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+        key.id, 'K', '1970-01-01T00:00:00.000Z', 'daily', 2, '2026-01-01T00:00:00.000Z'
+      );
+      d.close();
+
+      const res = await server.inject({
+        method: 'POST', url: '/v1/audio/speech',
+        headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+        payload: { model: 'tts-1', input: 'hello' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(Buffer.compare(res.rawPayload, audio)).toBe(0);
+    });
+
+    it('passes through 5xx JSON error body without corruption', async () => {
+      const key = { id: 'k-err', name: 'K', key: 'sk-err', isActive: true };
+      const errorBody = { error: { message: 'upstream error', code: 'internal' } };
+      const fetchImpl = async () => new Response(JSON.stringify(errorBody), { status: 500, headers: { 'content-type': 'application/json' } });
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key], fetchImpl });
+      const d = new Database(dbPath);
+      d.prepare('INSERT INTO key_policies (key_id, name, window_start, reset_policy, usage_multiplier, usage_multiplier_effective_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+        key.id, 'K', '1970-01-01T00:00:00.000Z', 'daily', 2, '2026-01-01T00:00:00.000Z'
+      );
+      d.close();
+
+      const res = await server.inject({
+        method: 'POST', url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+        payload: { model: 'm', messages: [] },
+      });
+      expect(res.statusCode).toBe(500);
+      // No `usage` field exists, so the body is forwarded as-is (re-serialized but identical).
+      expect(res.json()).toEqual(errorBody);
+    });
+
+    it('scales using multiplier resolved from usage_multiplier_events history', async () => {
+      const key = { id: 'k-hist', name: 'K', key: 'sk-hist', isActive: true };
+      const fetchImpl = async () => new Response(
+        JSON.stringify({ usage: { prompt_tokens: 100, completion_tokens: 50 } }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key], fetchImpl });
+      const d = new Database(dbPath);
+      // First event is in the past (effective_at in 2020); new multiplier applies now.
+      d.prepare('INSERT INTO key_policies (key_id, name, window_start, reset_policy) VALUES (?, ?, ?, ?)').run(
+        key.id, 'K', '1970-01-01T00:00:00.000Z', 'daily'
+      );
+      d.prepare('INSERT INTO usage_multiplier_events (key_id, multiplier, effective_at) VALUES (?, ?, ?)').run(key.id, 0.5, '2020-01-01T00:00:00.000Z');
+      d.close();
+
+      const res = await server.inject({
+        method: 'POST', url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+        payload: { model: 'm', messages: [] },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.usage.prompt_tokens).toBe(50);
+      expect(body.usage.completion_tokens).toBe(25);
+    });
+
+    it('does not scale when body is empty (204)', async () => {
+      const key = { id: 'k-204', name: 'K', key: 'sk-204', isActive: true };
+      const fetchImpl = async () => new Response(null, { status: 204, headers: { 'content-type': 'application/json' } });
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key], fetchImpl });
+      const d = new Database(dbPath);
+      d.prepare('INSERT INTO key_policies (key_id, name, window_start, reset_policy, usage_multiplier, usage_multiplier_effective_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+        key.id, 'K', '1970-01-01T00:00:00.000Z', 'daily', 2, '2026-01-01T00:00:00.000Z'
+      );
+      d.close();
+
+      const res = await server.inject({
+        method: 'POST', url: '/v1/chat/completions',
+        headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+        payload: { model: 'm', messages: [] },
+      });
+      expect(res.statusCode).toBe(204);
+      expect(res.body).toBe('');
+    });
+  });
+
 });
