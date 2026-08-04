@@ -54,6 +54,9 @@ export type KeyUsageSummary = {
   actualPrompt: number;
   actualCompletion: number;
   actualTotal: number;
+  actualCacheRead: number;
+  actualCacheCreation: number;
+  actualReasoning: number;
   dedupedRequests: number;
   duplicateRequests: number;
   duplicateTokens: number;
@@ -61,6 +64,9 @@ export type KeyUsageSummary = {
   prompt: number;
   completion: number;
   total: number;
+  cacheRead: number;
+  cacheCreation: number;
+  reasoning: number;
   cost: number;
   percentOfLimit?: number | null;
   firstUsageAt?: string | null;

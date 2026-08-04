@@ -81,6 +81,34 @@ describe('summarizeKeyUsage', () => {
     expect(out.percentOfLimit).toBeNull();
   });
 
+  it('scales cache_read_input_tokens, cache_creation_input_tokens, reasoning_tokens by multiplier', () => {
+    const rows = [
+      { apiKey: 'sk-aaaaaaaaaaaaaaaa', model: 'm1', timestamp: '2026-05-02T00:00:00.000Z', tokens: { prompt_tokens: 100, completion_tokens: 20, cache_read_input_tokens: 80, cache_creation_input_tokens: 40, reasoning_tokens: 12 }, cost: 0.1 },
+      { apiKey: 'sk-aaaaaaaaaaaaaaaa', model: 'm1', timestamp: '2026-05-03T00:00:00.000Z', tokens: { prompt_tokens: 100, completion_tokens: 20, cache_read_input_tokens: 80, cache_creation_input_tokens: 40, reasoning_tokens: 12 }, cost: 0.1 }
+    ];
+    const out = summarizeKeyUsage([keys[0]], rows, [{ key_id: 'a', window_start: '2026-05-01T00:00:00.000Z', usage_multiplier: 1.5, usage_multiplier_effective_at: '2026-05-03T00:00:00.000Z' }])[0];
+    // Row 1 is before effective_at -> factor 1; Row 2 is after -> factor 1.5
+    expect(out.actualCacheRead).toBe(160);
+    expect(out.actualCacheCreation).toBe(80);
+    expect(out.actualReasoning).toBe(24);
+    expect(out.cacheRead).toBe(80 + Math.round(80 * 1.5));
+    expect(out.cacheCreation).toBe(40 + Math.round(40 * 1.5));
+    expect(out.reasoning).toBe(12 + Math.round(12 * 1.5));
+  });
+
+  it('treats cache and reasoning fields as zero when missing on a record', () => {
+    const rows = [
+      { apiKey: 'sk-aaaaaaaaaaaaaaaa', model: 'm1', timestamp: '2026-05-02T00:00:00.000Z', tokens: { prompt_tokens: 10, completion_tokens: 5 } }
+    ];
+    const out = summarizeKeyUsage([keys[0]], rows, [{ key_id: 'a', window_start: '2026-05-01T00:00:00.000Z', usage_multiplier: 2, usage_multiplier_effective_at: '2026-05-01T00:00:00.000Z' }])[0];
+    expect(out.actualCacheRead).toBe(0);
+    expect(out.actualCacheCreation).toBe(0);
+    expect(out.actualReasoning).toBe(0);
+    expect(out.cacheRead).toBe(0);
+    expect(out.cacheCreation).toBe(0);
+    expect(out.reasoning).toBe(0);
+  });
+
   it('exposes allowedModels parsed from the policy column', () => {
     const keys = [{ id: 'k1', name: 'K1', key: 'sk-1', isActive: true }];
     const policies = [{ key_id: 'k1', window_start: '1970-01-01T00:00:00.000Z', allowed_models_json: JSON.stringify(['claude-opus-4.8', '', 'claude-opus-4.8']) }];
