@@ -39,6 +39,40 @@ describe('applyUsageMultiplierToUsage', () => {
     expect(usage.completion_tokens_details.reasoning_tokens).toBe(60);
   });
 
+  it('scales OpenAI Responses API nested details (input_tokens_details / output_tokens_details)', () => {
+    // /v1/responses uses input_/output_tokens_details with the same shape as
+    // prompt_/completion_tokens_details. We must scale both.
+    const usage = {
+      input_tokens: 200,
+      output_tokens: 100,
+      total_tokens: 300,
+      input_tokens_details: { cached_tokens: 50, audio_tokens: 2 },
+      output_tokens_details: { reasoning_tokens: 30 },
+    } as any;
+    applyUsageMultiplierToUsage(usage, 2);
+    expect(usage.input_tokens).toBe(400);
+    expect(usage.output_tokens).toBe(200);
+    expect(usage.total_tokens).toBe(600);
+    expect(usage.input_tokens_details.cached_tokens).toBe(100);
+    expect(usage.input_tokens_details.audio_tokens).toBe(2); // not in our list
+    expect(usage.output_tokens_details.reasoning_tokens).toBe(60);
+  });
+
+  it('scales both legacy and Responses API nested details in the same usage block', () => {
+    // Defensive: if upstream mixes schemas, both nested shapes get scaled.
+    const usage = {
+      prompt_tokens: 10,
+      input_tokens: 10,
+      prompt_tokens_details: { cached_tokens: 4 },
+      input_tokens_details: { cached_tokens: 4 },
+    } as any;
+    applyUsageMultiplierToUsage(usage, 3);
+    expect(usage.prompt_tokens).toBe(30);
+    expect(usage.input_tokens).toBe(30);
+    expect(usage.prompt_tokens_details.cached_tokens).toBe(12);
+    expect(usage.input_tokens_details.cached_tokens).toBe(12);
+  });
+
   it('scales Anthropic flat fields (input_tokens, output_tokens)', () => {
     const usage = { input_tokens: 200, output_tokens: 100, cache_read_input_tokens: 50, cache_creation_input_tokens: 25 };
     applyUsageMultiplierToUsage(usage, 0.5);
@@ -236,5 +270,21 @@ describe('createUsageScalingSseTransform', () => {
     const out = await runTransform(input, 2);
     expect(out).toContain('"input_tokens":200');
     expect(out).toContain('"output_tokens":100');
+  });
+
+  it('scales OpenAI Responses API streaming usage chunk', async () => {
+    // /v1/responses streams events like `response.completed` with the full
+    // usage object including input_tokens_details / output_tokens_details.
+    const input =
+      `data: {"type":"response.created","response":{"id":"resp_1"}}\n\n` +
+      `data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150,"input_tokens_details":{"cached_tokens":40},"output_tokens_details":{"reasoning_tokens":10}}}}\n\n` +
+      `data: [DONE]\n\n`;
+    const out = await runTransform(input, 2);
+    expect(out).toContain('"input_tokens":200');
+    expect(out).toContain('"output_tokens":100');
+    expect(out).toContain('"total_tokens":300');
+    expect(out).toContain('"cached_tokens":80');
+    expect(out).toContain('"reasoning_tokens":20');
+    expect(out).toContain('data: [DONE]');
   });
 });

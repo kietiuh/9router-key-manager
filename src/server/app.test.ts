@@ -797,6 +797,43 @@ describe('server app routes', () => {
       expect(res.statusCode).toBe(204);
       expect(res.body).toBe('');
     });
+
+    it('scales /v1/responses nested usage details (input_tokens_details / output_tokens_details)', async () => {
+      // OpenAI Responses API uses a different nested schema than chat/completions.
+      const key = { id: 'k-resp', name: 'K', key: 'sk-resp', isActive: true };
+      const upstream = {
+        id: 'resp_1',
+        output: [],
+        usage: {
+          input_tokens: 200,
+          output_tokens: 100,
+          total_tokens: 300,
+          input_tokens_details: { cached_tokens: 50, audio_tokens: 2 },
+          output_tokens_details: { reasoning_tokens: 30 },
+        },
+      };
+      const fetchImpl = async () => new Response(JSON.stringify(upstream), { status: 200, headers: { 'content-type': 'application/json' } });
+      const { instance: server, dbPath } = await app({ readApiKeys: () => [key], fetchImpl });
+      const d = new Database(dbPath);
+      d.prepare('INSERT INTO key_policies (key_id, name, window_start, reset_policy, usage_multiplier, usage_multiplier_effective_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+        key.id, 'K', '1970-01-01T00:00:00.000Z', 'daily', 2, '2026-01-01T00:00:00.000Z'
+      );
+      d.close();
+
+      const res = await server.inject({
+        method: 'POST', url: '/v1/responses',
+        headers: { authorization: `Bearer ${key.key}`, 'content-type': 'application/json' },
+        payload: { model: 'm', input: 'hi' },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.usage.input_tokens).toBe(400);
+      expect(body.usage.output_tokens).toBe(200);
+      expect(body.usage.total_tokens).toBe(600);
+      expect(body.usage.input_tokens_details.cached_tokens).toBe(100);
+      expect(body.usage.input_tokens_details.audio_tokens).toBe(2); // not scaled (not in our list)
+      expect(body.usage.output_tokens_details.reasoning_tokens).toBe(60);
+    });
   });
 
 });
