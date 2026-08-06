@@ -57,7 +57,13 @@ export function runWatcherOnce(db: Database.Database, options: WatcherOptions = 
       const alreadyAutoDisabled = summary?.resetPolicy === 'daily'
         ? !!db.prepare('SELECT 1 FROM auto_disabled_keys WHERE key_id = ? AND disabled_for_window_start = ?').get(event.keyId, summary.windowStart)
         : false;
-      if (!alreadyAutoDisabled && summary?.isActive !== false) {
+      // Skip if the key was already auto-disabled for this window (#68 hardening).
+      // Do NOT also check `summary.isActive` here: a monthly/manual key that was
+      // turned off by an earlier watcher pass has no auto-restore path, so the
+      // re-evaluation of the breach is what keeps the lockout durable across
+      // future runs and ensures we re-emit the alert if the user re-enables
+      // a still-over-quota key.
+      if (!alreadyAutoDisabled) {
         const result = atomicDisableApiKey(event.keyId, options.baseDir);
         if (summary?.resetPolicy === 'daily') {
           db.prepare('INSERT OR REPLACE INTO auto_disabled_keys (key_id, disabled_for_window_start, reason) VALUES (?, ?, ?)').run(event.keyId, summary.windowStart, event.message);

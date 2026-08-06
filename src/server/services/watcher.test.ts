@@ -133,6 +133,49 @@ describe('runWatcherOnce', () => {
     });
   });
 
+  it('keeps a monthly-quota key disabled on subsequent passes even when isActive is already false', () => {
+    // Regression: keys with resetPolicy !== 'daily' never get auto-restored, so
+    // a prior watcher pass leaves isActive=false. The next pass must still
+    // recognize the quota breach and not silently swallow it (was broken by
+    // #68's extra `isActive !== false` guard).
+    const { dir, db } = fixture();
+    db.prepare("UPDATE key_policies SET reset_policy = 'monthly' WHERE key_id = ?").run('a');
+    // monthly window resolves to current month — put usage inside it
+    const now = new Date().toISOString();
+    fs.writeFileSync(path.join(dir, 'usage.json'), JSON.stringify({ history: [{ apiKey: 'sk-a', model: 'm', timestamp: now, tokens: { total_tokens: 101 } }] }, null, 2));
+    const parsed = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
+    parsed.apiKeys[0].isActive = false;
+    fs.writeFileSync(path.join(dir, 'db.json'), JSON.stringify(parsed));
+
+    const out = runWatcherOnce(db, { baseDir: dir, hardDisable: true });
+
+    expect(out.events).toHaveLength(1);
+    expect(out.events[0].action).toBe('disable');
+    const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
+    expect(after.apiKeys[0].isActive).toBe(false);
+    // monthly policy should not insert into auto_disabled_keys (no daily window reset)
+    expect(db.prepare('SELECT COUNT(*) as n FROM auto_disabled_keys').get()).toMatchObject({ n: 0 });
+  });
+
+  it('does not double-disable an already-off expired key (idempotent)', () => {
+    // Once a key is off and expired, no further disable action is needed —
+    // evaluateLimits intentionally suppresses the expired event when
+    // isActive=false to avoid alert churn. This test pins that behaviour
+    // so a future change to policies.ts does not silently re-emit.
+    const { dir, db } = fixture();
+    // Remove quota so the only LimitEvent would be the expired one
+    db.prepare('UPDATE key_policies SET token_limit = NULL, expires_at = ? WHERE key_id = ?').run('2025-01-01T00:00:00.000Z', 'a');
+    const parsed = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
+    parsed.apiKeys[0].isActive = false;
+    fs.writeFileSync(path.join(dir, 'db.json'), JSON.stringify(parsed));
+
+    const out = runWatcherOnce(db, { baseDir: dir, hardDisable: true });
+
+    expect(out.events.filter((e: any) => /expired/i.test(e.message))).toHaveLength(0);
+    const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
+    expect(after.apiKeys[0].isActive).toBe(false);
+  });
+
   it('imports watcher usage incrementally from the latest stored event', () => {
     const { dir, db } = fixture();
     fs.unlinkSync(path.join(dir, 'usage.json'));
