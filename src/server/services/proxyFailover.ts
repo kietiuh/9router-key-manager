@@ -68,7 +68,7 @@ export type FetchUpstreamOptions = {
 };
 
 export function isRetryableUpstreamStatus(status: number): boolean {
-  return status === 401 || status === 402 || status === 413 || status === 429 || status >= 500;
+  return status === 400 || status === 401 || status === 402 || status === 413 || status === 429 || status >= 500;
 }
 
 type AttemptModel = {
