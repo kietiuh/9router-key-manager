@@ -233,6 +233,29 @@ export async function registerAdminRoutes(app: FastifyInstance, options: AdminRo
       invalidateUsageSummaryCache();
       return mutationOk(keyId);
     });
+    protectedRoutes.post('/api/keys/:keyId/clear-usage', async (req, reply) => {
+      const { keyId } = req.params as { keyId: string };
+      const apiKey = lookupApiKeyById(keyId);
+      if (!apiKey) return reply.code(404).send({ error: 'key not found' });
+      const deleted = db.transaction(() => {
+        const res = db.prepare('DELETE FROM usage_events WHERE api_key = ?').run(apiKey);
+        return Number(res.changes || 0);
+      })();
+      let vacuumed = true;
+      try {
+        db.exec('VACUUM');
+      } catch {
+        vacuumed = false;
+      }
+      db.prepare('INSERT INTO audit_log (key_id, action, message) VALUES (?, ?, ?)').run(
+        keyId,
+        'usage.clear',
+        JSON.stringify({ deleted, vacuumed }),
+      );
+      invalidateApiKeyCache();
+      invalidateUsageSummaryCache();
+      return { ok: true, keyId, deleted, vacuumed };
+    });
     protectedRoutes.post('/api/watcher/run', async () => {
       const out = runWatcherOnce(db, { hardDisable: hardDisable() });
       invalidateApiKeyCache();
