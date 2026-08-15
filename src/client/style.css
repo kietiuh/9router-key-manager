@@ -52,6 +52,19 @@ input[type=checkbox] { width:auto; margin-right:8px; vertical-align:middle; }
 .fallbackModelRow { display:grid; grid-template-columns:minmax(220px, 1fr) auto auto auto; gap:8px; align-items:end; }
 .fallbackModelRow input { margin-top:0; }
 .actions, .quick { display:flex; gap: 10px; margin: 12px 0 20px; flex-wrap:wrap; } .quick button { background:#123d2a; color:#55e39a; }
+.actions button.danger {
+  background: #c0392b;
+  color: #fff;
+  border-color: #c0392b;
+}
+.actions button.danger:hover:not(:disabled) {
+  background: #a93226;
+  border-color: #a93226;
+}
+.actions button.danger:disabled {
+  background: #c0392b;
+  opacity: 0.5;
+}
 .error { border: 1px solid #ef476f; color: #ff9aae; padding: 12px; border-radius: 12px; white-space: pre-wrap; background: #2a1018; }
 .formError { margin: 0; color: #ff9aae; }
 .audit { display: grid; gap: 8px; color: #bac6d8; }
@@ -128,17 +141,4 @@ pre { overflow: auto; background: #0c1324; padding: 10px; border-radius: 10px; }
 .logsFilters select, .logsFilters input { margin: 0; min-width: 130px; }
 .logsFilters button { align-self: end; }
 .pager { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
-.actions button.danger {
-  background: #c0392b;
-  color: #fff;
-  border-color: #c0392b;
-}
-.actions button.danger:hover:not(:disabled) {
-  background: #a93226;
-  border-color: #a93226;
-}
-.actions button.danger:disabled {
-  background: #c0392b;
-  opacity: 0.5;
-}
 .pager span { color: #9aa7bd; font-size: 0.9em; }
