@@ -4,7 +4,19 @@ import { fmt, fromVnInput, pct, toVnInput, vnDateTime } from './format';
 import { dict, recommendation, statusLabel, type Lang } from './i18n';
 import type { Audit } from './adminTypes';
 
-export function KeyDrawer({ selected, audit, config, lang, saving, onClose, onQuickDaily, onSavePolicy, onResetWindow, onViewDetail }: { selected: KeyUsageSummary; audit: Audit[]; config: ConfigStatus | null; lang: Lang; saving: string; onClose: () => void; onQuickDaily: (k: KeyUsageSummary, limit: number) => void; onSavePolicy: (k: KeyUsageSummary, form: HTMLFormElement) => void; onResetWindow: (k: KeyUsageSummary) => void; onViewDetail: (k: KeyUsageSummary) => void }) {
+export function KeyDrawer({ selected, audit, config, lang, saving, onClose, onQuickDaily, onSavePolicy, onResetWindow, onClearUsage, onViewDetail }: {
+  selected: KeyUsageSummary;
+  audit: Audit[];
+  config: ConfigStatus | null;
+  lang: Lang;
+  saving: string;
+  onClose: () => void;
+  onQuickDaily: (k: KeyUsageSummary, limit: number) => void;
+  onSavePolicy: (k: KeyUsageSummary, form: HTMLFormElement) => void;
+  onResetWindow: (k: KeyUsageSummary) => void;
+  onClearUsage: (k: KeyUsageSummary) => void;
+  onViewDetail: (k: KeyUsageSummary) => void;
+}) {
   const t = dict[lang];
   const selectedAudit = audit.filter(a => a.key_id === selected.keyId);
 
@@ -25,7 +37,11 @@ export function KeyDrawer({ selected, audit, config, lang, saving, onClose, onQu
       <label>{t.allowedModels}<textarea name="allowedModels" rows={3} placeholder={t.allowedModelsPlaceholder} defaultValue={(selected.allowedModels ?? []).join('\n')} /></label>
       <p className="hintText">{t.allowedModelsHint}</p>
       <label>{t.expires}<input name="expiresAt" type="datetime-local" defaultValue={toVnInput(selected.expiresAt)} /></label>
-      <div className="actions"><button disabled={saving === selected.keyId}>{saving === selected.keyId ? t.saving : t.save}</button><button type="button" disabled={selected.resetPolicy === 'daily' || selected.resetPolicy === 'monthly'} onClick={() => onResetWindow(selected)}>{t.resetNow}</button></div>
+      <div className="actions">
+        <button disabled={saving === selected.keyId}>{saving === selected.keyId ? t.saving : t.save}</button>
+        <button type="button" disabled={selected.resetPolicy === 'daily' || selected.resetPolicy === 'monthly'} onClick={() => onResetWindow(selected)}>{t.resetNow}</button>
+        <button type="button" className="danger" disabled={saving === selected.keyId} onClick={() => onClearUsage(selected)}>{t.clearUsage}</button>
+      </div>
     </form>
     <h3>{t.usageTitle}</h3>
     <div className="stats">
