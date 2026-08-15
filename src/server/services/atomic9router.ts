@@ -6,7 +6,6 @@ import { dbJsonPath } from '../parsers/paths.js';
 export type StorageToggleResult = {
   storage: 'sqlite' | 'json';
   dbPath: string;
-  backupPath: string;
   found: boolean;
   changed: boolean;
   isActive: boolean;
@@ -14,19 +13,11 @@ export type StorageToggleResult = {
 
 export type ToggleResult = {
   changed: boolean;
-  backupPath: string;
   dbPath: string;
   isActive: boolean;
   primary: 'sqlite' | 'json';
   results: StorageToggleResult[];
 };
-
-function backupFile(filePath: string, now: Date): string {
-  const stamp = now.toISOString().replace(/[:.]/g, '-');
-  const backupPath = `${filePath}.bak.${stamp}`;
-  fs.copyFileSync(filePath, backupPath, fs.constants.COPYFILE_EXCL);
-  return backupPath;
-}
 
 function sqlitePath(baseDir?: string): string {
   return path.join(baseDir ?? process.env.NINE_ROUTER_DIR ?? path.join(process.env.HOME ?? '/root', '.9router'), 'db', 'data.sqlite');
@@ -50,17 +41,16 @@ function hasSqliteApiKeys(filePath: string): boolean {
 function toggleSqliteApiKey(keyId: string, isActive: boolean, baseDir: string | undefined, now: Date): StorageToggleResult | null {
   const target = sqlitePath(baseDir);
   if (!hasSqliteApiKeys(target)) return null;
-  const backupPath = backupFile(target, now);
   const db = new Database(target, { fileMustExist: true });
   try {
     const row = db.prepare('SELECT id, isActive FROM apiKeys WHERE id = ?').get(keyId) as { id: string; isActive: number } | undefined;
-    if (!row) return { storage: 'sqlite', dbPath: target, backupPath, found: false, changed: false, isActive };
+    if (!row) return { storage: 'sqlite', dbPath: target, found: false, changed: false, isActive };
     const current = Number(row.isActive) !== 0;
-    if (current === isActive) return { storage: 'sqlite', dbPath: target, backupPath, found: true, changed: false, isActive };
+    if (current === isActive) return { storage: 'sqlite', dbPath: target, found: true, changed: false, isActive };
     db.prepare('UPDATE apiKeys SET isActive = ? WHERE id = ?').run(isActive ? 1 : 0, keyId);
     const after = db.prepare('SELECT isActive FROM apiKeys WHERE id = ?').get(keyId) as { isActive: number } | undefined;
     if (!after || (Number(after.isActive) !== 0) !== isActive) throw new Error(`Failed to verify SQLite apiKeys toggle for ${keyId}`);
-    return { storage: 'sqlite', dbPath: target, backupPath, found: true, changed: true, isActive };
+    return { storage: 'sqlite', dbPath: target, found: true, changed: true, isActive };
   } finally {
     db.close();
   }
@@ -73,9 +63,8 @@ function toggleJsonApiKey(keyId: string, isActive: boolean, baseDir: string | un
   const parsed = JSON.parse(original);
   if (!Array.isArray(parsed.apiKeys)) throw new Error('Invalid 9router db.json: apiKeys missing');
   const key = parsed.apiKeys.find((k: any) => k.id === keyId);
-  const backupPath = backupFile(target, now);
-  if (!key) return { storage: 'json', dbPath: target, backupPath, found: false, changed: false, isActive };
-  if (key.isActive === isActive) return { storage: 'json', dbPath: target, backupPath, found: true, changed: false, isActive };
+  if (!key) return { storage: 'json', dbPath: target, found: false, changed: false, isActive };
+  if (key.isActive === isActive) return { storage: 'json', dbPath: target, found: true, changed: false, isActive };
   key.isActive = isActive;
   key.updatedAt = now.toISOString();
   const next = JSON.stringify(parsed, null, 2) + '\n';
@@ -84,7 +73,7 @@ function toggleJsonApiKey(keyId: string, isActive: boolean, baseDir: string | un
   fs.writeFileSync(tmp, next, { mode: 0o600 });
   fs.renameSync(tmp, target);
   JSON.parse(fs.readFileSync(target, 'utf8'));
-  return { storage: 'json', dbPath: target, backupPath, found: true, changed: true, isActive };
+  return { storage: 'json', dbPath: target, found: true, changed: true, isActive };
 }
 
 function atomicToggleApiKey(keyId: string, isActive: boolean, baseDir?: string, now = new Date()): ToggleResult {
@@ -97,7 +86,6 @@ function atomicToggleApiKey(keyId: string, isActive: boolean, baseDir?: string, 
   const primaryResult = (sqlite ?? json)!;
   return {
     changed: results.some(r => r.changed),
-    backupPath: primaryResult.backupPath,
     dbPath: primaryResult.dbPath,
     isActive,
     primary,

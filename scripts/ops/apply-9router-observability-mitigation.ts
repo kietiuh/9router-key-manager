@@ -8,8 +8,6 @@ import {
 interface CliOptions {
   apply: boolean;
   dbPath: string;
-  backupDir?: string;
-  createBackup: boolean;
   enableObservability: boolean;
   maxRecords: number;
   maxJsonKb: number;
@@ -24,8 +22,6 @@ Options:
   --apply                 Write settings to the 9router SQLite DB.
   --db <path>             9router SQLite DB path. Defaults to NINE_ROUTER_DB,
                           NINE_ROUTER_DIR/db/data.sqlite, or ~/.9router/db/data.sqlite.
-  --backup-dir <path>     Directory for online SQLite backups before writes.
-  --no-backup             Skip backup. Not recommended for production.
   --enable-observability  Set enableObservability=true. Useful for rollback.
   --disable-observability Set enableObservability=false. This is the default mitigation.
   --max-records <number>  requestDetails retention after mitigation. Default: 100.
@@ -36,6 +32,9 @@ Examples:
   npm run ops:mitigate-9router-observability
   npm run ops:mitigate-9router-observability -- --apply
   npm run ops:mitigate-9router-observability -- --apply --db /root/.9router/db/data.sqlite
+
+Note: This script no longer creates automatic backups. Run
+scripts/backup-db.sh manually before invoking --apply if you need rollback.
 `;
 }
 
@@ -55,7 +54,6 @@ function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     apply: false,
     dbPath: default9routerDbPath(),
-    createBackup: true,
     enableObservability: DEFAULT_OBSERVABILITY_MITIGATION.enableObservability,
     maxRecords: DEFAULT_OBSERVABILITY_MITIGATION.observabilityMaxRecords,
     maxJsonKb: DEFAULT_OBSERVABILITY_MITIGATION.observabilityMaxJsonSize,
@@ -69,8 +67,6 @@ function parseArgs(argv: string[]): CliOptions {
     }
     if (arg === '--apply') {
       options.apply = true;
-    } else if (arg === '--no-backup') {
-      options.createBackup = false;
     } else if (arg === '--enable-observability') {
       options.enableObservability = true;
     } else if (arg === '--disable-observability') {
@@ -80,11 +76,6 @@ function parseArgs(argv: string[]): CliOptions {
       i += 1;
     } else if (arg.startsWith('--db=')) {
       options.dbPath = arg.slice('--db='.length);
-    } else if (arg === '--backup-dir') {
-      options.backupDir = readValue(argv, i, '--backup-dir');
-      i += 1;
-    } else if (arg.startsWith('--backup-dir=')) {
-      options.backupDir = arg.slice('--backup-dir='.length);
     } else if (arg === '--max-records') {
       options.maxRecords = readNumber(argv, i, '--max-records');
       i += 1;
@@ -114,9 +105,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const result = await applyObservabilityMitigation({
     dbPath: options.dbPath,
-    backupDir: options.backupDir,
     dryRun: !options.apply,
-    createBackup: options.createBackup,
     desired: {
       enableObservability: options.enableObservability,
       observabilityMaxRecords: options.maxRecords,
@@ -128,7 +117,6 @@ async function main() {
     mode: options.apply ? 'apply' : 'dry-run',
     dbPath: result.dbPath,
     changed: result.changed,
-    backupPath: result.backupPath,
     current: selectObservabilitySettings(result.current),
     target: selectObservabilitySettings(result.target),
     note: options.apply

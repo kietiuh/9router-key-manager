@@ -15,15 +15,12 @@ export type ObservabilityMitigationSettings = typeof DEFAULT_OBSERVABILITY_MITIG
 
 export interface ApplyObservabilityMitigationOptions {
   dbPath: string;
-  backupDir?: string;
   dryRun?: boolean;
-  createBackup?: boolean;
   desired?: ObservabilityMitigationSettings;
 }
 
 export interface ApplyObservabilityMitigationResult {
   dbPath: string;
-  backupPath: string | null;
   changed: boolean;
   current: SettingsJson;
   target: SettingsJson;
@@ -33,10 +30,6 @@ export function default9routerDbPath(env: NodeJS.ProcessEnv = process.env, homeD
   if (env.NINE_ROUTER_DB) return env.NINE_ROUTER_DB;
   if (env.NINE_ROUTER_DIR) return path.join(env.NINE_ROUTER_DIR, 'db', 'data.sqlite');
   return path.join(homeDir, '.9router', 'db', 'data.sqlite');
-}
-
-export function default9routerBackupDir(dbPath: string) {
-  return path.join(path.dirname(dbPath), 'backups');
 }
 
 export function buildMitigatedSettings(
@@ -69,16 +62,8 @@ export async function applyObservabilityMitigation(
     const current = readSettings(db);
     const target = buildMitigatedSettings(current, options.desired);
     const changed = JSON.stringify(current) !== JSON.stringify(target);
-    let backupPath: string | null = null;
 
     if (!options.dryRun && changed) {
-      if (options.createBackup !== false) {
-        const backupDir = options.backupDir || default9routerBackupDir(dbPath);
-        fs.mkdirSync(backupDir, { recursive: true });
-        backupPath = path.join(backupDir, backupFileName(dbPath));
-        await db.backup(backupPath);
-      }
-
       db.prepare('INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data').run(
         JSON.stringify(target),
       );
@@ -86,7 +71,6 @@ export async function applyObservabilityMitigation(
 
     return {
       dbPath,
-      backupPath,
       changed,
       current,
       target,
@@ -114,15 +98,4 @@ function assertSettingsTableExists(db: Database.Database, dbPath: string) {
   if (!row) {
     throw new Error(`9router settings table not found in ${dbPath}; start 9router once before applying this mitigation`);
   }
-}
-
-function backupFileName(dbPath: string) {
-  return `${path.basename(dbPath)}.observability.${stamp(new Date())}.bak`;
-}
-
-function stamp(date: Date) {
-  return date
-    .toISOString()
-    .replace(/[-:]/g, '')
-    .replace(/\.\d{3}Z$/, 'Z');
 }

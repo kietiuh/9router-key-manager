@@ -29,17 +29,14 @@ function sqliteActive(dir: string, id: string) {
 }
 
 describe('atomic 9router key toggle', () => {
-  it('backs up db.json and disables only target key on legacy storage', () => {
+  it('disables only target key on legacy storage', () => {
     const dir = tmp9router();
     const res = atomicDisableApiKey('b', dir, new Date('2026-01-01T00:00:00.000Z'));
     expect(res.primary).toBe('json');
     expect(res.changed).toBe(true);
-    expect(fs.existsSync(res.backupPath)).toBe(true);
     const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
     expect(after.apiKeys.find((k: any) => k.id === 'a').isActive).toBe(true);
     expect(after.apiKeys.find((k: any) => k.id === 'b').isActive).toBe(false);
-    const backup = JSON.parse(fs.readFileSync(res.backupPath, 'utf8'));
-    expect(backup.apiKeys.find((k: any) => k.id === 'b').isActive).toBe(true);
   });
 
   it('uses SQLite as primary and mirrors db.json on modern 9router storage', () => {
@@ -51,7 +48,6 @@ describe('atomic 9router key toggle', () => {
     expect(sqliteActive(dir, 'b')).toBe(false);
     const after = JSON.parse(fs.readFileSync(path.join(dir, 'db.json'), 'utf8'));
     expect(after.apiKeys.find((k: any) => k.id === 'b').isActive).toBe(false);
-    expect(res.results.every(r => fs.existsSync(r.backupPath))).toBe(true);
   });
 
   it('re-enables keys in both SQLite and db.json', () => {

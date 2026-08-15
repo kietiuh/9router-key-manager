@@ -19,7 +19,6 @@ interface CliOptions {
   bundlePath: string;
   dbPath: string;
   providerIds: string[];
-  createBackup: boolean;
 }
 
 function usage() {
@@ -34,7 +33,6 @@ Options:
   --db <path>          9router SQLite DB path. Defaults to NINE_ROUTER_DB,
                        NINE_ROUTER_DIR/db/data.sqlite, or ~/.9router/db/data.sqlite.
   --provider-id <id>   Additional provider node id to patch. Can be repeated.
-  --no-backup          Skip bundle backup before writing. Not recommended.
   --help               Show this help.
 
 Behavior:
@@ -48,6 +46,9 @@ Behavior:
 Examples:
   npm run ops:patch-9router-synthetic-usage
   npm run ops:patch-9router-synthetic-usage -- --apply
+
+Note: This script no longer creates automatic bundle backups. Make a copy of the
+bundle manually before invoking --apply if you need rollback.
 `;
 }
 
@@ -63,7 +64,6 @@ function parseArgs(argv: string[]): CliOptions {
     bundlePath: DEFAULT_BUNDLE_PATH,
     dbPath: default9routerDbPath(),
     providerIds: [],
-    createBackup: true,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -74,8 +74,6 @@ function parseArgs(argv: string[]): CliOptions {
     }
     if (arg === '--apply') {
       options.apply = true;
-    } else if (arg === '--no-backup') {
-      options.createBackup = false;
     } else if (arg === '--bundle') {
       options.bundlePath = readValue(argv, i, '--bundle');
       i += 1;
@@ -110,17 +108,6 @@ function readProviderIdsFromDb(dbPath: string): string[] {
   }
 }
 
-function backupPathFor(bundlePath: string) {
-  return `${bundlePath}.synthetic-usage.${stamp(new Date())}.bak`;
-}
-
-function stamp(date: Date) {
-  return date
-    .toISOString()
-    .replace(/[-:]/g, '')
-    .replace(/\.\d{3}Z$/, 'Z');
-}
-
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const bundlePath = path.resolve(options.bundlePath);
@@ -129,13 +116,8 @@ async function main() {
   const providerIds = [...new Set([...readProviderIdsFromDb(options.dbPath), ...options.providerIds])].sort();
   const current = fs.readFileSync(bundlePath, 'utf8');
   const result = patch9routerUsageBundle(current, { providerIds });
-  let backupPath: string | null = null;
 
   if (options.apply && result.changed) {
-    if (options.createBackup) {
-      backupPath = backupPathFor(bundlePath);
-      fs.copyFileSync(bundlePath, backupPath);
-    }
     fs.writeFileSync(bundlePath, result.content);
   }
 
@@ -150,7 +132,6 @@ async function main() {
       streamingRequestDetailsTokens: REQUEST_DETAILS_TOKEN_PATCH_MARKER,
     },
     changed: result.changed,
-    backupPath,
     note: options.apply
       ? 'Patch written if changed. Restart 9router before verifying new usage rows.'
       : 'Dry-run only. Re-run with --apply to write the installed 9router bundle.',

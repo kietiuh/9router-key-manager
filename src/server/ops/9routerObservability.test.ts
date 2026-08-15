@@ -89,27 +89,23 @@ describe('9router observability mitigation ops', () => {
     });
   });
 
-  it('dry-runs without writing settings or creating a backup', async () => {
-    const { dir, dbPath } = tempDb();
+  it('dry-runs without writing settings', async () => {
+    const { dbPath } = tempDb();
 
     const result = await applyObservabilityMitigation({
       dbPath,
-      backupDir: path.join(dir, 'backups'),
       dryRun: true,
     });
 
     expect(result.changed).toBe(true);
-    expect(result.backupPath).toBeNull();
     expect(readSettings(dbPath).enableObservability).toBe(true);
-    expect(fs.existsSync(path.join(dir, 'backups'))).toBe(false);
   });
 
-  it('applies settings and creates an online SQLite backup without deleting history', async () => {
-    const { dir, dbPath } = tempDb();
+  it('applies settings without deleting history', async () => {
+    const { dbPath } = tempDb();
 
     const result = await applyObservabilityMitigation({
       dbPath,
-      backupDir: path.join(dir, 'backups'),
       dryRun: false,
     });
 
@@ -117,8 +113,6 @@ describe('9router observability mitigation ops', () => {
     const db = new Database(dbPath, { readonly: true });
     try {
       expect(result.changed).toBe(true);
-      expect(result.backupPath).toMatch(/data\.sqlite\.observability\.\d{8}T\d{6}Z\.bak$/);
-      expect(fs.existsSync(result.backupPath as string)).toBe(true);
       expect(settings).toMatchObject(DEFAULT_OBSERVABILITY_MITIGATION);
       expect(settings.observabilityEnabled).toBe(false);
       expect(db.prepare('SELECT COUNT(*) as n FROM usageHistory').get()).toMatchObject({ n: 1 });
