@@ -128,4 +128,17 @@ pre { overflow: auto; background: #0c1324; padding: 10px; border-radius: 10px; }
 .logsFilters select, .logsFilters input { margin: 0; min-width: 130px; }
 .logsFilters button { align-self: end; }
 .pager { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.actions button.danger {
+  background: #c0392b;
+  color: #fff;
+  border-color: #c0392b;
+}
+.actions button.danger:hover:not(:disabled) {
+  background: #a93226;
+  border-color: #a93226;
+}
+.actions button.danger:disabled {
+  background: #c0392b;
+  opacity: 0.5;
+}
 .pager span { color: #9aa7bd; font-size: 0.9em; }
